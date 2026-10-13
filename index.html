@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scene Forge</title>
+<style>
+:root{--bg:#f3f2ef;--panel:#fff;--line:#dcd8d0;--text:#201d18;--mute:#6f6a5f;--acc:#b36b00;--accfg:#fff;--bad:#b3261e;box-sizing:border-box}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14120f;--panel:#1d1a16;--line:#34302a;--text:#ece8df;--mute:#9a9486;--acc:#e0a23a;--accfg:#1d1300;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Avenir Next","Segoe UI",system-ui,sans-serif;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+h1{font-size:18px;margin:0 8px 0 0}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+button,select,input,textarea{font:inherit;color:var(--text)}
+button{background:transparent;border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--acc)}
+button:disabled{opacity:.45;cursor:default}
+button.on,button.pri{background:var(--acc);border-color:var(--acc);color:var(--accfg)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input[type=text],input[type=password],textarea,select{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
+textarea{resize:vertical;min-height:54px}
+.pw{margin-left:auto;display:flex;gap:6px;align-items:center;max-width:240px}
+main{padding:20px;max-width:1280px;margin:0 auto}
+section{display:grid;gap:14px}
+section[hidden]{display:none}
+label{display:grid;gap:4px;font-weight:600}
+label.inl{display:flex;gap:8px;align-items:center;font-weight:400}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:8px;align-content:start}
+.card h3{margin:0;font-size:15px}
+.pv{background:repeating-conic-gradient(#8884 0 25%,#0000 0 50%) 0 0/16px 16px;border:1px solid var(--line);border-radius:6px;aspect-ratio:16/9;display:grid;place-items:center;overflow:hidden}
+.pv canvas{width:100%;height:100%;object-fit:contain}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ctl{display:grid;grid-template-columns:110px 1fr 40px;gap:8px;align-items:center}
+.mute{color:var(--mute)}.err{color:var(--bad)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+#log{white-space:pre-wrap;color:var(--mute);margin:0;font-size:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px}
+canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(--line);border-radius:8px;background:#000}
+</style>
+</head>
+<body>
+<header>
+  <h1>Scene Forge</h1>
+  <nav id="tabs"></nav>
+  <div class="pw"><input id="pw" type="password" placeholder="Password" aria-label="App password" autocomplete="current-password"></div>
+</header>
+<main>
+<section id="s0">
+  <div class="panel">
+    <label>Theme<textarea id="theme">a quiet mountain village at dusk</textarea></label>
+    <label>Art style<textarea id="style">flat 2D vector game art, clean shapes, soft gradients, gentle painterly lighting</textarea></label>
+    <label>Colour palette<textarea id="palette">deep purple sky fading to warm orange at the horizon, navy and dark green silhouettes</textarea></label>
+    <div class="two">
+      <label>Aspect ratio<select id="aspect"><option>16:9</option><option>21:9</option></select></label>
+      <label>Image size<select id="size"><option value="1K">1K (cheaper)</option><option value="2K">2K (sharper)</option></select></label>
+      <label>Model<select id="model"><option value="gemini-3.1-flash-image">gemini-3.1-flash-image (fast)</option><option value="gemini-3-pro-image">gemini-3-pro-image (best quality)</option></select></label>
+    </div>
+    <label class="inl"><input id="useref" type="checkbox" checked> Use the first generated image as a style reference for the rest</label>
+    <p class="mute">Every image is a paid Google generation. Set a budget cap in your Google Cloud account before testing.</p>
+  </div>
+</section>
+
+<section id="s1" hidden>
+  <div class="row"><button class="pri" id="genall">Generate all layers</button><span class="mute">Each layer is generated on a plain white background, the white is removed, and the result is resized to 1080 px tall with blended edges.</span></div>
+  <div class="grid" id="cards"></div>
+</section>
+
+<section id="s2" hidden>
+  <div class="panel">
+    <label>Character description<textarea id="cdesc">a young traveller with a large backpack, olive jacket and brown boots</textarea></label>
+    <div class="two">
+      <label>Columns<select id="ccols"></select></label>
+      <label>Rows<select id="crows"></select></label>
+      <label>Sheet aspect ratio<select id="caspect"><option>16:9</option><option>21:9</option><option>1:1</option><option>4:3</option></select></label>
+    </div>
+    <div class="ctl"><span>BG tolerance</span><input id="ctol" type="range" min="5" max="120" value="40"><span id="ctolv">40</span></div>
+    <div class="row"><button class="pri" id="cgen">Generate walk sheet</button><button id="cdl" disabled>Download sheet PNG</button></div>
+    <p id="cst" class="mute">Not generated yet.</p>
+  </div>
+  <div class="two">
+    <div class="card"><h3>Raw result</h3><div class="pv"><canvas id="craw" width="480" height="270"></canvas></div></div>
+    <div class="card"><h3>Cleaned sheet</h3><div class="pv"><canvas id="csheet" width="480" height="270"></canvas></div></div>
+    <div class="card"><h3>Walk preview</h3><div class="pv"><canvas id="canim" width="480" height="270"></canvas></div>
+      <div class="ctl"><span>Frame rate</span><input id="cfps" type="range" min="4" max="24" value="10"><span id="cfpsv">10</span></div></div>
+  </div>
+</section>
+
+<section id="s3" hidden>
+  <div class="panel">
+    <canvas id="stage" class="stage" width="640" height="360"></canvas>
+    <p class="mute">Live preview of the accepted layers scrolling behind the character. Real speeds are set later in your parallax app.</p>
+    <div class="row"><button class="pri" id="zip">Download project zip</button><span id="zst" class="mute"></span></div>
+  </div>
+</section>
+<pre id="log"></pre>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const mod=(a,n)=>((a%n)+n)%n;
+
+//#PURE
+function runs(v,gap){const o=[];let s=-1,last=-1;for(let i=0;i<v.length;i++){if(v[i]){if(s<0)s=i;last=i}else if(s>=0&&i-last>gap){o.push([s,last]);s=-1}}if(s>=0)o.push([s,last]);return o}
+function detectBoxes(d,w,h){
+  const ra=new Uint8Array(h);
+  for(let y=0;y<h;y++){const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10){ra[y]=1;break}}
+  const boxes=[];
+  for(const [y0,y1] of runs(ra,10)){
+    if(y1-y0<30)continue;
+    const ca=new Uint8Array(w);
+    for(let y=y0;y<=y1;y++){const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)ca[x]=1}
+    for(const [x0,x1] of runs(ca,10)){
+      if(x1-x0<10)continue;
+      let ty=1e9,by=-1,lx=1e9,rx=-1;
+      for(let y=y0;y<=y1;y++){const o=y*w*4+3;for(let x=x0;x<=x1;x++)if(d[o+x*4]>10){if(y<ty)ty=y;if(y>by)by=y;if(x<lx)lx=x;if(x>rx)rx=x}}
+      boxes.push([lx,ty,rx,by]);
+    }
+  }
+  return boxes;
+}
+function removeBgData(d,w,h,tol){
+  tol=Math.max(1,tol);
+  const samp=[];
+  for(const [x0,y0] of [[0,0],[w-4,0],[0,h-4],[w-4,h-4]])for(let y=0;y<4;y++)for(let x=0;x<4;x++){const i=((y0+y)*w+x0+x)*4;samp.push([d[i],d[i+1],d[i+2]])}
+  const bg=[0,1,2].map(c=>{const v=samp.map(s=>s[c]).sort((a,b)=>a-b);return v[v.length>>1]});
+  const dist=i=>Math.hypot(d[i]-bg[0],d[i+1]-bg[1],d[i+2]-bg[2]);
+  const mask=new Uint8Array(w*h),q=new Int32Array(w*h);let qh=0,qt=0;
+  const push=p=>{if(!mask[p]&&dist(p*4)<=tol){mask[p]=1;q[qt++]=p}};
+  for(let x=0;x<w;x++){push(x);push((h-1)*w+x)}
+  for(let y=0;y<h;y++){push(y*w);push(y*w+w-1)}
+  while(qh<qt){const p=q[qh++],x=p%w,y=(p/w)|0;if(x>0)push(p-1);if(x<w-1)push(p+1);if(y>0)push(p-w);if(y<h-1)push(p+w)}
+  for(let p=0;p<w*h;p++){
+    const i=p*4;
+    if(mask[p]){d[i+3]=0;continue}
+    const x=p%w,y=(p/w)|0;
+    const nb=(x>0&&mask[p-1])||(x<w-1&&mask[p+1])||(y>0&&mask[p-w])||(y<h-1&&mask[p+w]);
+    if(nb){
+      const a=Math.min(1,dist(i)/(tol*2.2));
+      if(a<1){for(let c=0;c<3;c++)d[i+c]=Math.max(0,Math.min(255,(d[i+c]-bg[c]*(1-a))/Math.max(a,.05)));d[i+3]=Math.round(a*255)}
+    }
+  }
+  return mask;
+}
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return b=>{let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=t[(c^b[i])&255]^(c>>>8);return(c^0xFFFFFFFF)>>>0}})();
+function zipFiles(files){
+  const te=new TextEncoder(),parts=[],cd=[];let off=0;
+  for(const f of files){
+    const nm=te.encode(f.name),crc=CRC(f.data),sz=f.data.length;
+    const lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(12,0x21,true);lh.setUint32(14,crc,true);lh.setUint32(18,sz,true);lh.setUint32(22,sz,true);lh.setUint16(26,nm.length,true);
+    parts.push(new Uint8Array(lh.buffer),nm,f.data);
+    const ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(14,0x21,true);ch.setUint32(16,crc,true);ch.setUint32(20,sz,true);ch.setUint32(24,sz,true);ch.setUint16(28,nm.length,true);ch.setUint32(42,off,true);
+    cd.push(new Uint8Array(ch.buffer),nm);off+=30+nm.length+sz;
+  }
+  const cdl=cd.reduce((a,p)=>a+p.length,0),e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cdl,true);e.setUint32(16,off,true);
+  return [...parts,...cd,new Uint8Array(e.buffer)];
+}
+//#ENDPURE
+
+const H=1080;
+const BG='The background must be a perfectly flat, plain, pure white (#FFFFFF) with no gradient, shadow, texture or ground plane.';
+const COMMON='Flat 2D side-view game background art seen straight from the side, no characters, no text, no border, no watermark. The left and right edges should continue naturally so the image could repeat side to side.';
+const DEFS=[
+ {k:'sky',n:'Sky',opaque:true,speed:6,t:'Only the sky: a smooth gradient with a few soft clouds that fills the entire frame edge to edge. No ground, no hills, no trees, no sun disc, nothing touching the bottom edge.'},
+ {k:'far',n:'Far hills',speed:25,t:'A distant, hazy, low-contrast band of mountains or hills, occupying only the lower 45% of the image and touching the bottom edge.'},
+ {k:'mid',n:'Mid ground',speed:55,t:'Mid-distance scenery (trees, buildings or rolling hills) occupying only the lower 40% of the image and touching the bottom edge.'},
+ {k:'near',n:'Near foliage',speed:110,t:'Closer, darker foreground scenery (large trees, bushes, rocks) occupying only the lower 35% of the image, touching the bottom edge, leaving the middle of the frame empty.'},
+ {k:'ground',n:'Ground',speed:200,t:'Only a ground strip: grass and a dirt path seen from the side, occupying only the bottom 15% of the image, touching the bottom edge.'}
+];
+const S={layers:DEFS.map(d=>({...d,raw:null,out:null,tol:40,blend:200,extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
+const log=m=>{$('log').textContent=m};
+const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),palette:$('palette').value.trim()});
+
+// ---- tabs
+const TABS=['1. Setup','2. Scene layers','3. Character','4. Preview & export'];
+TABS.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>show(i);$('tabs').appendChild(b)});
+function show(n){TABS.forEach((_,i)=>{$('s'+i).hidden=i!==n;$('tabs').children[i].classList.toggle('on',i===n)});S.tab=n}
+show(0);
+try{const p=sessionStorage.getItem('sf-pw');if(p)$('pw').value=p}catch(e){}
+$('pw').onchange=()=>{try{sessionStorage.setItem('sf-pw',$('pw').value)}catch(e){}};
+
+// ---- API
+async function api(prompt,ref,aspect){
+  const r=await fetch('/api/generate',{method:'POST',headers:{'content-type':'application/json','x-app-password':$('pw').value},
+    body:JSON.stringify({prompt,ref,aspect:aspect||$('aspect').value,size:$('size').value,model:$('model').value})});
+  let j;try{j=await r.json()}catch(e){throw new Error('Server answered '+r.status+' without JSON. On a Vercel Hobby plan a slow generation can time out.')}
+  if(!r.ok)throw new Error(j.error||('Error '+r.status));
+  return j;
+}
+const loadImg=(b64,mime)=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('Could not decode the returned image'));i.src='data:'+mime+';base64,'+b64});
+function refFrom(img){
+  const s=Math.min(1,768/Math.max(img.naturalWidth,img.naturalHeight)),c=document.createElement('canvas');
+  c.width=Math.round(img.naturalWidth*s);c.height=Math.round(img.naturalHeight*s);
+  const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
+  return c.toDataURL('image/jpeg',.8).split(',')[1];
+}
+const toCanvas=img=>{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);return c};
+function firstRaw(except){const l=S.layers.find(x=>x.raw&&x!==except);return l?l.raw:null}
+function removeBg(cv,tol){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height);removeBgData(id.data,cv.width,cv.height,tol);g.putImageData(id,0,0)}
+function fitH(cv){const s=H/cv.height,o=document.createElement('canvas');o.width=Math.round(cv.width*s);o.height=H;const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,0,o.width,o.height);return o}
+function blendEdges(src,b){
+  const w=src.width,h=src.height;b=Math.min(Math.round(b),Math.floor(w/2)-1);
+  if(b<2)return src;
+  const o=document.createElement('canvas');o.width=w-b;o.height=h;const g=o.getContext('2d');
+  g.drawImage(src,w-b,0,b,h,0,0,b,h);
+  const s=document.createElement('canvas');s.width=b;s.height=h;const sg=s.getContext('2d');
+  sg.drawImage(src,0,0,b,h,0,0,b,h);sg.globalCompositeOperation='destination-in';
+  const gr=sg.createLinearGradient(0,0,b,0);gr.addColorStop(0,'rgba(0,0,0,0)');gr.addColorStop(1,'rgba(0,0,0,1)');
+  sg.fillStyle=gr;sg.fillRect(0,0,b,h);g.drawImage(s,0,0);
+  g.drawImage(src,b,0,w-2*b,h,b,0,w-2*b,h);
+  return o;
+}
+function paintFit(pv,cv){const g=pv.getContext('2d');g.clearRect(0,0,pv.width,pv.height);const s=Math.min(pv.width/cv.width,pv.height/cv.height),w=cv.width*s,h=cv.height*s;g.drawImage(cv,(pv.width-w)/2,(pv.height-h)/2,w,h)}
+
+// ---- scene layer cards
+S.layers.forEach((l,i)=>{
+  const c=document.createElement('div');c.className='card';
+  c.innerHTML=`<h3>${i+1}. ${l.n}</h3><div class="pv"><canvas width="480" height="270"></canvas></div><p class="st mute">Not generated yet.</p>
+  <label>Extra notes for this layer<input type="text" class="ex" placeholder="optional, e.g. add a river"></label>
+  <div class="ctl" ${l.opaque?'hidden':''}><span>BG tolerance</span><input type="range" class="tol" min="5" max="120" value="${l.tol}"><span>${l.tol}</span></div>
+  <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="600" step="10" value="${l.blend}"><span>${l.blend}</span></div>
+  <div class="row"><button class="gen">Generate</button><button class="dl" disabled>Download PNG</button></div>`;
+  l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),dl:c.querySelector('.dl')};
+  c.querySelector('.ex').oninput=e=>{l.extra=e.target.value};
+  const tol=c.querySelector('.tol');if(tol)tol.onchange=e=>{l.tol=+e.target.value;e.target.nextElementSibling.textContent=l.tol;process(l)};
+  const bl=c.querySelector('.bl');bl.onchange=e=>{l.blend=+e.target.value;e.target.nextElementSibling.textContent=l.blend;process(l)};
+  l.el.gen.onclick=()=>genLayer(l);
+  l.el.dl.onclick=()=>dlCanvas(l.out,l.k+'.png');
+  $('cards').appendChild(c);
+});
+function setSt(l,m,err){l.el.st.textContent=m;l.el.st.className='st '+(err?'err':'mute')}
+function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy;S.layers.forEach(l=>l.el.gen.disabled=b);$('genall').disabled=b;$('cgen').disabled=b}
+function process(l){
+  if(!l.raw)return;
+  let cv=toCanvas(l.raw);
+  if(!l.opaque)removeBg(cv,l.tol);
+  l.out=blendEdges(fitH(cv),l.blend);
+  paintFit(l.el.pv,l.out);l.el.dl.disabled=false;
+}
+async function genLayer(l){
+  const c=cfg();
+  if(!c.theme){setSt(l,'Enter a theme in the Setup tab first.',1);return false}
+  l.busy=true;lock();setSt(l,'Generating. This can take 10 to 40 seconds.');
+  try{
+    const f=$('useref').checked?firstRaw(l):null,ref=f?refFrom(f):null;
+    const p=`${c.theme}. Art style: ${c.style}. Colour palette: ${c.palette}. ${l.t} ${l.extra} ${l.opaque?'':BG} ${COMMON}`+(ref?' Use the attached reference image only as a guide for art style, colours and lighting. Do not copy its composition.':'');
+    const j=await api(p,ref);
+    l.raw=await loadImg(j.image,j.mime);process(l);setSt(l,'Done. Adjust the sliders or generate again.');return true;
+  }catch(e){setSt(l,e.message,1);return false}
+  finally{l.busy=false;lock()}
+}
+$('genall').onclick=async()=>{for(const l of S.layers){if(l.raw)continue;if(!(await genLayer(l)))break}};
+function dlCanvas(cv,name){cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000)})}
+
+// ---- character
+for(let i=1;i<=8;i++){$('ccols').add(new Option(i,i));}
+for(let i=1;i<=4;i++){$('crows').add(new Option(i,i));}
+$('ccols').value=4;$('crows').value=2;
+$('ctol').oninput=e=>{$('ctolv').textContent=e.target.value};
+$('ctol').onchange=()=>{if(S.ch.raw)processChar()};
+$('cfps').oninput=e=>{$('cfpsv').textContent=e.target.value};
+const cst=(m,err)=>{$('cst').textContent=m;$('cst').className=err?'err':'mute'};
+$('cgen').onclick=async()=>{
+  const c=cfg(),cols=+$('ccols').value,rows=+$('crows').value,n=cols*rows;
+  S.ch.busy=true;lock();cst('Generating. This can take 10 to 40 seconds.');
+  try{
+    const f=$('useref').checked?firstRaw(null):null,ref=f?refFrom(f):null;
+    const p=`Character sprite sheet for a 2D side-scrolling game. Character: ${$('cdesc').value.trim()}. Art style: ${c.style}. Show exactly ${n} frames of one smooth side-view walk cycle, arranged in a grid of ${cols} columns and ${rows} rows, evenly spaced with clear empty gaps between frames and nothing overlapping. It is the same character at the same size and proportions in every frame, facing right, full body visible, feet on a consistent ground line. ${BG} No text, no labels, no grid lines, no shadows.`+(ref?' Use the attached reference image only as a guide for art style and colours.':'');
+    const j=await api(p,ref,$('caspect').value);
+    S.ch.raw=await loadImg(j.image,j.mime);processChar();
+  }catch(e){cst(e.message,1)}
+  finally{S.ch.busy=false;lock()}
+};
+function processChar(){
+  paintFit($('craw'),toCanvas(S.ch.raw));const cv=toCanvas(S.ch.raw);removeBg(cv,+$('ctol').value);
+  const want=+$('ccols').value*+$('crows').value;
+  try{
+    const r=buildSheet(cv);S.ch.cells=r.cells;S.ch.info=r;S.ch.sheet=r.sheet;paintFit($('csheet'),r.sheet);$('cdl').disabled=false;
+    cst('Found '+r.cells.length+' frames'+(r.cells.length===want?'.':' (you asked for '+want+'). If frames merged or split, adjust the tolerance or generate again.')+' Sheet grid: '+r.cols+' columns x '+r.rows+' rows, cell '+r.cw+' x '+r.ch+' px.');
+  }catch(e){cst(e.message,1)}
+}
+function buildSheet(cv){
+  const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),boxes=detectBoxes(id.data,cv.width,cv.height);
+  if(!boxes.length)throw new Error('No characters found. Lower the tolerance or generate again.');
+  const fr=boxes.map(([x0,y0,x1,y1])=>{
+    const w=x1-x0+1,h=y1-y0+1,c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(cv,x0,y0,w,h,0,0,w,h);
+    const top=c.getContext('2d').getImageData(0,0,w,Math.max(3,Math.round(h*.12))).data;let sx=0,n=0;
+    for(let i=3;i<top.length;i+=4)if(top[i]>10){sx+=((i-3)/4)%w;n++}
+    return{c,w,h,hx:n?sx/n:w/2};
+  });
+  const hs=fr.map(f=>f.h).sort((a,b)=>a-b),TH=hs[hs.length>>1];let L=0,R=0;
+  fr.forEach(f=>{f.s=TH/f.h;L=Math.max(L,f.hx*f.s);R=Math.max(R,(f.w-f.hx)*f.s)});
+  const CW=Math.ceil(L+R)+16,CH=TH+16,ax=Math.ceil(L)+8;
+  const cells=fr.map(f=>{const c=document.createElement('canvas');c.width=CW;c.height=CH;const g2=c.getContext('2d');g2.imageSmoothingQuality='high';g2.drawImage(f.c,Math.round(ax-f.hx*f.s),CH-8-TH,Math.round(f.w*f.s),TH);return c});
+  const cols=Math.min(cells.length,8),rows=Math.ceil(cells.length/cols),sh=document.createElement('canvas');sh.width=CW*cols;sh.height=CH*rows;
+  const sg=sh.getContext('2d');cells.forEach((c,i)=>sg.drawImage(c,(i%cols)*CW,Math.floor(i/cols)*CH));
+  return{sheet:sh,cells,cols,rows,cw:CW,ch:CH,ax,base:CH-8};
+}
+$('cdl').onclick=()=>dlCanvas(S.ch.sheet,'walk_sheet.png');
+
+// ---- preview loop (character animation + parallax stage)
+const pos=S.layers.map(()=>0);let last=performance.now();
+function frame(t){
+  const dt=Math.min(.1,(t-last)/1000);last=t;
+  const info=S.ch.info;
+  if(info&&S.ch.cells.length){
+    const fps=+$('cfps').value,i=Math.floor(t/1000*fps)%S.ch.cells.length;
+    if(S.tab===2){const a=$('canim').getContext('2d');a.clearRect(0,0,480,270);const k=Math.min(480/info.cw,270/info.ch);a.drawImage(S.ch.cells[i],(480-info.cw*k)/2,(270-info.ch*k)/2,info.cw*k,info.ch*k)}
+  }
+  if(S.tab===3)drawStage(dt,t);
+  requestAnimationFrame(frame);
+}
+function drawStage(dt,t){
+  const cv=$('stage'),g=cv.getContext('2d'),PW=cv.width,PH=cv.height,sc=PH/H;
+  g.fillStyle='#10131a';g.fillRect(0,0,PW,PH);
+  const info=S.ch.info;
+  const sprite=()=>{
+    if(!info||!S.ch.cells.length)return;
+    const fps=+$('cfps').value,i=Math.floor(t/1000*fps)%S.ch.cells.length,k=(0.24*PH)/(info.ch-16);
+    g.drawImage(S.ch.cells[i],PW*.4-info.ax*k,PH*.93-info.base*k,info.cw*k,info.ch*k);
+  };
+  S.layers.forEach((l,i)=>{
+    if(l.out){
+      pos[i]+=l.speed*sc*dt;const w=l.out.width*sc,x0=-mod(pos[i],w);
+      for(let x=x0;x<PW;x+=w)g.drawImage(l.out,x,0,w,PH);
+    }
+    if(i===2)sprite();
+  });
+  if(!S.layers[2].out)sprite();
+}
+requestAnimationFrame(frame);
+
+// ---- export
+$('zip').onclick=async()=>{
+  const files=[],te=new TextEncoder(),meta={stageHeight:H,layers:[],sprite:null};
+  const png=async cv=>new Uint8Array(await(await new Promise(r=>cv.toBlob(r))).arrayBuffer());
+  let n=0;
+  for(const l of S.layers){if(!l.out)continue;n++;const name='layers/0'+n+'_'+l.k+'.png';files.push({name,data:await png(l.out)});meta.layers.push({file:name,width:l.out.width,height:l.out.height,suggestedSpeed:l.speed,transparent:!l.opaque})}
+  if(S.ch.sheet){const i=S.ch.info;files.push({name:'character/walk_sheet.png',data:await png(S.ch.sheet)});meta.sprite={file:'character/walk_sheet.png',columns:i.cols,rows:i.rows,frames:S.ch.cells.length,cellWidth:i.cw,cellHeight:i.ch,suggestedFps:+$('cfps').value}}
+  if(!files.length){$('zst').textContent='Nothing to export yet.';return}
+  files.push({name:'project.json',data:te.encode(JSON.stringify(meta,null,2))});
+  const blob=new Blob(zipFiles(files),{type:'application/zip'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='scene-pack.zip';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+  $('zst').textContent=files.length-1+' image files exported.';
+};
+</script>
+</body>
+</html>
