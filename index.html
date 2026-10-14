@@ -120,6 +120,21 @@ function detectBoxes(d,w,h){
   }
   return boxes;
 }
+function findSeam(d,w,h){
+  const S=64,SW=6,R=Math.max(SW+2,Math.floor(w*.12));
+  const sig=new Map();
+  const col=x=>{let v=sig.get(x);if(v)return v;v=new Float32Array(S*4);
+    for(let k=0;k<S;k++){const y=Math.min(h-1,Math.floor((k+.5)*h/S)),i=(y*w+x)*4,a=d[i+3]/255;v[k*4]=d[i]*a;v[k*4+1]=d[i+1]*a;v[k*4+2]=d[i+2]*a;v[k*4+3]=a*255}
+    sig.set(x,v);return v};
+  const dist=(a,b)=>{let t=0;for(let i=0;i<a.length;i++){const e=a[i]-b[i];t+=e*e}return t};
+  let best=Infinity,bx0=SW,bx1=w-1;
+  for(let x0=SW;x0<=R;x0++)for(let x1=w-1-R;x1<w;x1++){
+    let c=0;
+    for(let j=0;j<SW;j++){c+=dist(col(x1-j),col(x0-1-j));if(c>=best)break}
+    if(c<best){best=c;bx0=x0;bx1=x1}
+  }
+  return [bx0,bx1];
+}
 function contentRows(d,w,h){
   const need=Math.max(6,Math.round(w*.004));let top=-1,bot=-1;
   const cnt=y=>{let n=0;const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)n++;return n};
@@ -179,7 +194,7 @@ const DEFS=[
  {k:'near',n:'Near foliage',speed:110,hp:28,top:.4,t:'Dark foreground silhouettes of large trees, bushes and rocks, occupying only the lower 30% of the image, with the bottom edge completely filled and the middle of the frame left empty. No buildings.'},
  {k:'ground',n:'Ground',speed:200,hp:10,top:.7,t:'Only a thin ground strip: grass, small plants and a simple dirt path seen from the side, occupying only the bottom 12% of the image. No buildings, no trees, no fences, no rocks.'}
 ];
-const S={layers:DEFS.map(d=>({...d,raw:null,out:null,tol:40,blend:200,extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
+const S={layers:DEFS.map(d=>({...d,raw:null,out:null,tol:40,blend:24,method:'match',extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
 const log=m=>{$('log').textContent=m};
 const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),skypal:$('skypal').value.trim(),scenepal:$('scenepal').value.trim()});
 
@@ -219,6 +234,15 @@ function fitLayer(cv,hp){
   const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,top,w,ch,0,H-dh,o.width,dh);
   return o;
 }
+function makeLoop(cv,method,b){
+  if(method==='mirror'){const o=document.createElement('canvas');o.width=cv.width*2;o.height=cv.height;const g=o.getContext('2d');g.drawImage(cv,0,0);g.save();g.translate(cv.width*2,0);g.scale(-1,1);g.drawImage(cv,0,0);g.restore();return o}
+  if(method==='match'){
+    const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data,[x0,x1]=findSeam(d,cv.width,cv.height);
+    const o=document.createElement('canvas');o.width=x1-x0+1;o.height=cv.height;o.getContext('2d').drawImage(cv,x0,0,o.width,cv.height,0,0,o.width,cv.height);
+    return blendEdges(o,b);
+  }
+  return blendEdges(cv,b);
+}
 function blendEdges(src,b){
   const w=src.width,h=src.height;b=Math.min(Math.round(b),Math.floor(w/2)-1);
   if(b<2)return src;
@@ -241,12 +265,14 @@ S.layers.forEach((l,i)=>{
   <label>Extra notes for this layer<input type="text" class="ex" placeholder="optional, e.g. add a river"></label>
   <div class="ctl" ${l.opaque?'hidden':''}><span>BG tolerance</span><input type="range" class="tol" min="5" max="120" value="${l.tol}"><span>${l.tol}</span></div>
   <div class="ctl" ${l.opaque?'hidden':''}><span>Scene height %</span><input type="range" class="hp" min="0" max="95" value="${l.hp||0}"><span>${l.hp||0}</span></div>
-  <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="600" step="10" value="${l.blend}"><span>${l.blend}</span></div>
+  <div class="ctl"><span>Looping</span><select class="sm"><option value="match">Match &amp; trim (best)</option><option value="mirror">Mirror (always clean)</option><option value="cross">Crossfade (can ghost)</option></select><span></span></div>
+  <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="200" step="2" value="${l.blend}"><span>${l.blend}</span></div>
   <div class="row"><button class="gen">Generate</button><button class="dl" disabled>Download PNG</button></div>`;
   l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),dl:c.querySelector('.dl')};
   c.querySelector('.ex').oninput=e=>{l.extra=e.target.value};
   const tol=c.querySelector('.tol');if(tol)tol.onchange=e=>{l.tol=+e.target.value;e.target.nextElementSibling.textContent=l.tol;process(l)};
   const hp=c.querySelector('.hp');hp.onchange=e=>{l.hp=+e.target.value;e.target.nextElementSibling.textContent=l.hp;process(l)};
+  const sm=c.querySelector('.sm');sm.value=l.method;sm.onchange=e=>{l.method=e.target.value;process(l)};
   const bl=c.querySelector('.bl');bl.onchange=e=>{l.blend=+e.target.value;e.target.nextElementSibling.textContent=l.blend;process(l)};
   l.el.gen.onclick=()=>genLayer(l);
   l.el.dl.onclick=()=>dlCanvas(l.out,l.k+'.png');
@@ -263,7 +289,7 @@ function process(l){
     const f=e/n;
     if(f<.9)l.warn='The top '+Math.round(l.top*100)+'% of this layer is only '+Math.round(f*100)+'% empty, so the model probably painted a sky, haze or glow into it. Generate again, or add "no sky, plain white above the scenery" to the notes.';
   }
-  l.out=blendEdges(l.opaque?fitH(cv):fitLayer(cv,l.hp),l.blend);
+  l.out=makeLoop(l.opaque?fitH(cv):fitLayer(cv,l.hp),l.method,l.blend);
   paintTiled(l.el.pv,l.out);l.el.dl.disabled=false;
   setSt(l,l.warn||'Done. Adjust the sliders or generate again.',!!l.warn);
 }
