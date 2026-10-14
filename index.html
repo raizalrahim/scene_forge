@@ -51,13 +51,14 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
   <div class="panel">
     <label>Theme<textarea id="theme">a quiet mountain village at dusk</textarea></label>
     <label>Art style<textarea id="style">flat 2D vector game art, clean shapes, soft gradients, gentle painterly lighting</textarea></label>
-    <label>Colour palette<textarea id="palette">deep purple sky fading to warm orange at the horizon, navy and dark green silhouettes</textarea></label>
+    <label>Sky colours (used for the sky layer only)<textarea id="skypal">deep purple at the top fading to warm orange and pink at the horizon</textarea></label>
+    <label>Scenery colours (used for every other layer)<textarea id="scenepal">navy blue and dark green silhouettes with a soft warm orange rim light</textarea></label>
     <div class="two">
       <label>Aspect ratio<select id="aspect"><option>16:9</option><option>21:9</option></select></label>
       <label>Image size<select id="size"><option value="1K">1K (cheaper)</option><option value="2K">2K (sharper)</option></select></label>
       <label>Model<select id="model"><option value="gemini-3.1-flash-image">gemini-3.1-flash-image (fast)</option><option value="gemini-3-pro-image">gemini-3-pro-image (best quality)</option></select></label>
     </div>
-    <label class="inl"><input id="useref" type="checkbox" checked> Use the first generated image as a style reference for the rest</label>
+    <label class="inl"><input id="useref" type="checkbox"> Use the first generated image as a style reference (off by default: it can make later layers copy the sky)</label>
     <p class="mute">Every image is a paid Google generation. Set a budget cap in your Google Cloud account before testing.</p>
   </div>
 </section>
@@ -119,6 +120,13 @@ function detectBoxes(d,w,h){
   }
   return boxes;
 }
+function contentRows(d,w,h){
+  const need=Math.max(6,Math.round(w*.004));let top=-1,bot=-1;
+  const cnt=y=>{let n=0;const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)n++;return n};
+  for(let y=0;y<h;y++)if(cnt(y)>=need){top=y;break}
+  for(let y=h-1;y>=0;y--)if(cnt(y)>=need){bot=y;break}
+  return [top,bot];
+}
 function removeBgData(d,w,h,tol){
   tol=Math.max(1,tol);
   const samp=[];
@@ -162,17 +170,18 @@ function zipFiles(files){
 
 const H=1080;
 const BG='The background must be a perfectly flat, plain, pure white (#FFFFFF) with no gradient, shadow, texture or ground plane.';
+const CUT='IMPORTANT: this is a cut-out layer for a parallax animation. Everything that is not part of the scenery must be flat pure white (#FFFFFF). Do NOT paint any sky, clouds, sun, moon, stars, mist, fog, smoke, haze, glow, gradient or horizon behind or above the scenery. The whole area above the scenery must be plain white. '+BG;
 const COMMON='Flat 2D side-view game background art seen straight from the side, no characters, no text, no border, no watermark. The left and right edges should continue naturally so the image could repeat side to side.';
 const DEFS=[
- {k:'sky',n:'Sky',opaque:true,speed:6,t:'Only the sky: a smooth gradient with a few soft clouds that fills the entire frame edge to edge. No ground, no hills, no trees, no sun disc, nothing touching the bottom edge.'},
- {k:'far',n:'Far hills',speed:25,t:'A distant, hazy, low-contrast band of mountains or hills, occupying only the lower 45% of the image and touching the bottom edge.'},
- {k:'mid',n:'Mid ground',speed:55,t:'Mid-distance scenery (trees, buildings or rolling hills) occupying only the lower 40% of the image and touching the bottom edge.'},
- {k:'near',n:'Near foliage',speed:110,t:'Closer, darker foreground scenery (large trees, bushes, rocks) occupying only the lower 35% of the image, touching the bottom edge, leaving the middle of the frame empty.'},
- {k:'ground',n:'Ground',speed:200,t:'Only a ground strip: grass and a dirt path seen from the side, occupying only the bottom 15% of the image, touching the bottom edge.'}
+ {k:'sky',n:'Sky',opaque:true,speed:6,t:'Only the sky: a smooth gradient with a few soft clouds that fills the entire frame edge to edge. No ground, no hills, no trees, no buildings, no sun disc, nothing touching the bottom edge.'},
+ {k:'far',n:'Far hills',speed:25,hp:50,top:.3,t:'A distant band of mountains and hills drawn as flat, slightly hazy silhouettes, occupying only the lower 50% of the image, with the bottom edge of the image completely filled by the hills. No buildings and no trees in the foreground.'},
+ {k:'mid',n:'Mid ground',speed:55,hp:38,top:.3,t:'Mid-distance rolling hills with trees (and a few small houses only if the theme is a village), occupying only the lower 40% of the image, with the bottom edge completely filled.'},
+ {k:'near',n:'Near foliage',speed:110,hp:28,top:.4,t:'Dark foreground silhouettes of large trees, bushes and rocks, occupying only the lower 30% of the image, with the bottom edge completely filled and the middle of the frame left empty. No buildings.'},
+ {k:'ground',n:'Ground',speed:200,hp:10,top:.7,t:'Only a thin ground strip: grass, small plants and a simple dirt path seen from the side, occupying only the bottom 12% of the image. No buildings, no trees, no fences, no rocks.'}
 ];
 const S={layers:DEFS.map(d=>({...d,raw:null,out:null,tol:40,blend:200,extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
 const log=m=>{$('log').textContent=m};
-const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),palette:$('palette').value.trim()});
+const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),skypal:$('skypal').value.trim(),scenepal:$('scenepal').value.trim()});
 
 // ---- tabs
 const TABS=['1. Setup','2. Scene layers','3. Character','4. Preview & export'];
@@ -199,8 +208,17 @@ function refFrom(img){
 }
 const toCanvas=img=>{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);return c};
 function firstRaw(except){const l=S.layers.find(x=>x.raw&&x!==except);return l?l.raw:null}
-function removeBg(cv,tol){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height);removeBgData(id.data,cv.width,cv.height,tol);g.putImageData(id,0,0)}
+function removeBg(cv,tol){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),m=removeBgData(id.data,cv.width,cv.height,tol);g.putImageData(id,0,0);return m}
 function fitH(cv){const s=H/cv.height,o=document.createElement('canvas');o.width=Math.round(cv.width*s);o.height=H;const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,0,o.width,o.height);return o}
+function fitLayer(cv,hp){
+  if(!hp)return fitH(cv);
+  const w=cv.width,h=cv.height,d=cv.getContext('2d').getImageData(0,0,w,h).data,[top,bot]=contentRows(d,w,h);
+  if(top<0)return fitH(cv);
+  const ch=bot-top+1,s=hp/100*H/ch,dh=Math.round(ch*s),o=document.createElement('canvas');
+  o.width=Math.max(8,Math.round(w*s));o.height=H;
+  const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,top,w,ch,0,H-dh,o.width,dh);
+  return o;
+}
 function blendEdges(src,b){
   const w=src.width,h=src.height;b=Math.min(Math.round(b),Math.floor(w/2)-1);
   if(b<2)return src;
@@ -213,6 +231,7 @@ function blendEdges(src,b){
   g.drawImage(src,b,0,w-2*b,h,b,0,w-2*b,h);
   return o;
 }
+function paintTiled(pv,cv){const g=pv.getContext('2d'),k=pv.height/cv.height,w=cv.width*k;g.clearRect(0,0,pv.width,pv.height);for(let x=0;x<pv.width;x+=w)g.drawImage(cv,x,0,w,pv.height)}
 function paintFit(pv,cv){const g=pv.getContext('2d');g.clearRect(0,0,pv.width,pv.height);const s=Math.min(pv.width/cv.width,pv.height/cv.height),w=cv.width*s,h=cv.height*s;g.drawImage(cv,(pv.width-w)/2,(pv.height-h)/2,w,h)}
 
 // ---- scene layer cards
@@ -221,11 +240,13 @@ S.layers.forEach((l,i)=>{
   c.innerHTML=`<h3>${i+1}. ${l.n}</h3><div class="pv"><canvas width="480" height="270"></canvas></div><p class="st mute">Not generated yet.</p>
   <label>Extra notes for this layer<input type="text" class="ex" placeholder="optional, e.g. add a river"></label>
   <div class="ctl" ${l.opaque?'hidden':''}><span>BG tolerance</span><input type="range" class="tol" min="5" max="120" value="${l.tol}"><span>${l.tol}</span></div>
+  <div class="ctl" ${l.opaque?'hidden':''}><span>Scene height %</span><input type="range" class="hp" min="0" max="95" value="${l.hp||0}"><span>${l.hp||0}</span></div>
   <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="600" step="10" value="${l.blend}"><span>${l.blend}</span></div>
   <div class="row"><button class="gen">Generate</button><button class="dl" disabled>Download PNG</button></div>`;
   l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),dl:c.querySelector('.dl')};
   c.querySelector('.ex').oninput=e=>{l.extra=e.target.value};
   const tol=c.querySelector('.tol');if(tol)tol.onchange=e=>{l.tol=+e.target.value;e.target.nextElementSibling.textContent=l.tol;process(l)};
+  const hp=c.querySelector('.hp');hp.onchange=e=>{l.hp=+e.target.value;e.target.nextElementSibling.textContent=l.hp;process(l)};
   const bl=c.querySelector('.bl');bl.onchange=e=>{l.blend=+e.target.value;e.target.nextElementSibling.textContent=l.blend;process(l)};
   l.el.gen.onclick=()=>genLayer(l);
   l.el.dl.onclick=()=>dlCanvas(l.out,l.k+'.png');
@@ -235,10 +256,16 @@ function setSt(l,m,err){l.el.st.textContent=m;l.el.st.className='st '+(err?'err'
 function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy;S.layers.forEach(l=>l.el.gen.disabled=b);$('genall').disabled=b;$('cgen').disabled=b}
 function process(l){
   if(!l.raw)return;
-  let cv=toCanvas(l.raw);
-  if(!l.opaque)removeBg(cv,l.tol);
-  l.out=blendEdges(fitH(cv),l.blend);
-  paintFit(l.el.pv,l.out);l.el.dl.disabled=false;
+  let cv=toCanvas(l.raw);l.warn='';
+  if(!l.opaque){
+    const m=removeBg(cv,l.tol),rows=Math.floor(cv.height*l.top),n=rows*cv.width;let e=0;
+    for(let i=0;i<n;i++)e+=m[i];
+    const f=e/n;
+    if(f<.9)l.warn='The top '+Math.round(l.top*100)+'% of this layer is only '+Math.round(f*100)+'% empty, so the model probably painted a sky, haze or glow into it. Generate again, or add "no sky, plain white above the scenery" to the notes.';
+  }
+  l.out=blendEdges(l.opaque?fitH(cv):fitLayer(cv,l.hp),l.blend);
+  paintTiled(l.el.pv,l.out);l.el.dl.disabled=false;
+  setSt(l,l.warn||'Done. Adjust the sliders or generate again.',!!l.warn);
 }
 async function genLayer(l){
   const c=cfg();
@@ -246,9 +273,9 @@ async function genLayer(l){
   l.busy=true;lock();setSt(l,'Generating. This can take 10 to 40 seconds.');
   try{
     const f=$('useref').checked?firstRaw(l):null,ref=f?refFrom(f):null;
-    const p=`${c.theme}. Art style: ${c.style}. Colour palette: ${c.palette}. ${l.t} ${l.extra} ${l.opaque?'':BG} ${COMMON}`+(ref?' Use the attached reference image only as a guide for art style, colours and lighting. Do not copy its composition.':'');
+    const p=`${c.theme}. Art style: ${c.style}. ${l.opaque?'Sky colours: '+c.skypal:'Scenery colours: '+c.scenepal}. ${l.t} ${l.extra} ${l.opaque?'':CUT} ${COMMON}`+(ref?' Use the attached reference image only as a guide for art style, colours and lighting. Do not copy its composition.':'');
     const j=await api(p,ref);
-    l.raw=await loadImg(j.image,j.mime);process(l);setSt(l,'Done. Adjust the sliders or generate again.');return true;
+    l.raw=await loadImg(j.image,j.mime);process(l);return true;
   }catch(e){setSt(l,e.message,1);return false}
   finally{l.busy=false;lock()}
 }
