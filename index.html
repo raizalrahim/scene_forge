@@ -59,6 +59,7 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
       <label>Model<select id="model"><option value="gemini-3.1-flash-image">gemini-3.1-flash-image (fast)</option><option value="gemini-3-pro-image">gemini-3-pro-image (best quality)</option></select></label>
     </div>
     <label class="inl"><input id="useref" type="checkbox"> Use the first generated image as a style reference (off by default: it can make later layers copy the sky)</label>
+    <label class="inl"><input id="autow" type="checkbox"> Auto-widen scenery layers until they are at least as wide as the stage (costs extra generations, up to 3 images per layer)</label>
     <p class="mute">Every image is a paid Google generation. Set a budget cap in your Google Cloud account before testing.</p>
   </div>
 </section>
@@ -120,21 +121,22 @@ function detectBoxes(d,w,h){
   }
   return boxes;
 }
-function findSeam(d,w,h){
-  const S=64,SW=6,R=Math.max(SW+2,Math.floor(w*.12));
-  const sig=new Map();
-  const col=x=>{let v=sig.get(x);if(v)return v;v=new Float32Array(S*4);
+function findJoin(dA,wA,hA,dB,wB,hB){
+  const S=64,SW=6,RA=Math.max(SW+2,Math.floor(wA*.12)),RB=Math.max(SW+2,Math.floor(wB*.12));
+  const mk=(d,w,h)=>{const m=new Map();return x=>{let v=m.get(x);if(v)return v;v=new Float32Array(S*4);
     for(let k=0;k<S;k++){const y=Math.min(h-1,Math.floor((k+.5)*h/S)),i=(y*w+x)*4,a=d[i+3]/255;v[k*4]=d[i]*a;v[k*4+1]=d[i+1]*a;v[k*4+2]=d[i+2]*a;v[k*4+3]=a*255}
-    sig.set(x,v);return v};
+    m.set(x,v);return v}};
+  const cA=mk(dA,wA,hA),cB=mk(dB,wB,hB);
   const dist=(a,b)=>{let t=0;for(let i=0;i<a.length;i++){const e=a[i]-b[i];t+=e*e}return t};
-  let best=Infinity,bx0=SW,bx1=w-1;
-  for(let x0=SW;x0<=R;x0++)for(let x1=w-1-R;x1<w;x1++){
+  let best=Infinity,bx1=wA-1,bx0=SW;
+  for(let x0=SW;x0<=RB;x0++)for(let x1=wA-1-RA;x1<wA;x1++){
     let c=0;
-    for(let j=0;j<SW;j++){c+=dist(col(x1-j),col(x0-1-j));if(c>=best)break}
-    if(c<best){best=c;bx0=x0;bx1=x1}
+    for(let j=0;j<SW;j++){c+=dist(cA(x1-j),cB(x0-1-j));if(c>=best)break}
+    if(c<best){best=c;bx1=x1;bx0=x0}
   }
-  return [bx0,bx1];
+  return [bx1,bx0];
 }
+function findSeam(d,w,h){const [x1,x0]=findJoin(d,w,h,d,w,h);return [x0,x1]}
 function contentRows(d,w,h){
   const need=Math.max(6,Math.round(w*.004));let top=-1,bot=-1;
   const cnt=y=>{let n=0;const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)n++;return n};
@@ -142,7 +144,7 @@ function contentRows(d,w,h){
   for(let y=h-1;y>=0;y--)if(cnt(y)>=need){bot=y;break}
   return [top,bot];
 }
-function removeBgData(d,w,h,tol){
+function removeBgData(d,w,h,tol,enclosed){
   tol=Math.max(1,tol);
   const samp=[];
   for(const [x0,y0] of [[0,0],[w-4,0],[0,h-4],[w-4,h-4]])for(let y=0;y<4;y++)for(let x=0;x<4;x++){const i=((y0+y)*w+x0+x)*4;samp.push([d[i],d[i+1],d[i+2]])}
@@ -153,6 +155,7 @@ function removeBgData(d,w,h,tol){
   for(let x=0;x<w;x++){push(x);push((h-1)*w+x)}
   for(let y=0;y<h;y++){push(y*w);push(y*w+w-1)}
   while(qh<qt){const p=q[qh++],x=p%w,y=(p/w)|0;if(x>0)push(p-1);if(x<w-1)push(p+1);if(y>0)push(p-w);if(y<h-1)push(p+w)}
+  if(enclosed){for(let p=0;p<w*h;p++)if(!mask[p]&&dist(p*4)<=tol)mask[p]=1}
   for(let p=0;p<w*h;p++){
     const i=p*4;
     if(mask[p]){d[i+3]=0;continue}
@@ -194,7 +197,7 @@ const DEFS=[
  {k:'near',n:'Near foliage',speed:110,hp:28,top:.4,t:'Dark foreground silhouettes of large trees, bushes and rocks, occupying only the lower 30% of the image, with the bottom edge completely filled and the middle of the frame left empty. No buildings.'},
  {k:'ground',n:'Ground',speed:200,hp:10,top:.7,t:'Only a thin ground strip: grass, small plants and a simple dirt path seen from the side, occupying only the bottom 12% of the image. No buildings, no trees, no fences, no rocks.'}
 ];
-const S={layers:DEFS.map(d=>({...d,raw:null,out:null,tol:40,blend:24,method:'match',extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
+const S={layers:DEFS.map(d=>({...d,raw:null,out:null,parts:[],tol:40,enc:true,blend:24,method:'match',extra:'',busy:false})),ch:{raw:null,cells:[],info:null,sheet:null,busy:false}};
 const log=m=>{$('log').textContent=m};
 const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),skypal:$('skypal').value.trim(),scenepal:$('scenepal').value.trim()});
 
@@ -223,7 +226,7 @@ function refFrom(img){
 }
 const toCanvas=img=>{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);return c};
 function firstRaw(except){const l=S.layers.find(x=>x.raw&&x!==except);return l?l.raw:null}
-function removeBg(cv,tol){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),m=removeBgData(id.data,cv.width,cv.height,tol);g.putImageData(id,0,0);return m}
+function removeBg(cv,tol,enc){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),m=removeBgData(id.data,cv.width,cv.height,tol,enc);g.putImageData(id,0,0);return m}
 function fitH(cv){const s=H/cv.height,o=document.createElement('canvas');o.width=Math.round(cv.width*s);o.height=H;const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,0,o.width,o.height);return o}
 function fitLayer(cv,hp){
   if(!hp)return fitH(cv);
@@ -233,6 +236,18 @@ function fitLayer(cv,hp){
   o.width=Math.max(8,Math.round(w*s));o.height=H;
   const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,0,top,w,ch,0,H-dh,o.width,dh);
   return o;
+}
+function joinParts(list){
+  let cur=list[0];
+  for(let i=1;i<list.length;i++){
+    const B=list[i],dA=cur.getContext('2d').getImageData(0,0,cur.width,cur.height).data,dB=B.getContext('2d').getImageData(0,0,B.width,B.height).data;
+    const [x1,x0]=findJoin(dA,cur.width,cur.height,dB,B.width,B.height);
+    const o=document.createElement('canvas');o.width=(x1+1)+(B.width-x0);o.height=cur.height;const g=o.getContext('2d');
+    g.drawImage(cur,0,0,x1+1,cur.height,0,0,x1+1,cur.height);
+    g.drawImage(B,x0,0,B.width-x0,B.height,x1+1,0,B.width-x0,B.height);
+    cur=o;
+  }
+  return cur;
 }
 function makeLoop(cv,method,b){
   if(method==='mirror'){const o=document.createElement('canvas');o.width=cv.width*2;o.height=cv.height;const g=o.getContext('2d');g.drawImage(cv,0,0);g.save();g.translate(cv.width*2,0);g.scale(-1,1);g.drawImage(cv,0,0);g.restore();return o}
@@ -264,13 +279,17 @@ S.layers.forEach((l,i)=>{
   c.innerHTML=`<h3>${i+1}. ${l.n}</h3><div class="pv"><canvas width="480" height="270"></canvas></div><p class="st mute">Not generated yet.</p>
   <label>Extra notes for this layer<input type="text" class="ex" placeholder="optional, e.g. add a river"></label>
   <div class="ctl" ${l.opaque?'hidden':''}><span>BG tolerance</span><input type="range" class="tol" min="5" max="120" value="${l.tol}"><span>${l.tol}</span></div>
+  <label class="inl" ${l.opaque?'hidden':''}><input type="checkbox" class="en" ${l.enc?'checked':''}> Also remove enclosed white (gaps between trees)</label>
   <div class="ctl" ${l.opaque?'hidden':''}><span>Scene height %</span><input type="range" class="hp" min="0" max="95" value="${l.hp||0}"><span>${l.hp||0}</span></div>
   <div class="ctl"><span>Looping</span><select class="sm"><option value="match">Match &amp; trim (best)</option><option value="mirror">Mirror (always clean)</option><option value="cross">Crossfade (can ghost)</option></select><span></span></div>
   <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="200" step="2" value="${l.blend}"><span>${l.blend}</span></div>
-  <div class="row"><button class="gen">Generate</button><button class="dl" disabled>Download PNG</button></div>`;
-  l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),dl:c.querySelector('.dl')};
+  <div class="row"><button class="gen">Generate</button><button class="wd" disabled>Widen (+1 generation)</button><button class="rm" disabled>Remove last image</button><button class="dl" disabled>Download PNG</button></div>`;
+  l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),wd:c.querySelector('.wd'),rm:c.querySelector('.rm'),dl:c.querySelector('.dl')};
+  l.el.wd.onclick=()=>genLayer(l,true);
+  l.el.rm.onclick=()=>{if(l.parts.length>1){l.parts.pop();process(l)}};
   c.querySelector('.ex').oninput=e=>{l.extra=e.target.value};
   const tol=c.querySelector('.tol');if(tol)tol.onchange=e=>{l.tol=+e.target.value;e.target.nextElementSibling.textContent=l.tol;process(l)};
+  const en=c.querySelector('.en');en.onchange=e=>{l.enc=e.target.checked;process(l)};
   const hp=c.querySelector('.hp');hp.onchange=e=>{l.hp=+e.target.value;e.target.nextElementSibling.textContent=l.hp;process(l)};
   const sm=c.querySelector('.sm');sm.value=l.method;sm.onchange=e=>{l.method=e.target.value;process(l)};
   const bl=c.querySelector('.bl');bl.onchange=e=>{l.blend=+e.target.value;e.target.nextElementSibling.textContent=l.blend;process(l)};
@@ -279,29 +298,44 @@ S.layers.forEach((l,i)=>{
   $('cards').appendChild(c);
 });
 function setSt(l,m,err){l.el.st.textContent=m;l.el.st.className='st '+(err?'err':'mute')}
-function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy;S.layers.forEach(l=>l.el.gen.disabled=b);$('genall').disabled=b;$('cgen').disabled=b}
+function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy;S.layers.forEach(l=>{l.el.gen.disabled=b;l.el.wd.disabled=b||!l.parts.length||l.opaque||l.parts.length>=3;if(b)l.el.rm.disabled=true;else l.el.rm.disabled=l.parts.length<2});$('genall').disabled=b;$('cgen').disabled=b}
+const STAGE_W=1920;
 function process(l){
-  if(!l.raw)return;
-  let cv=toCanvas(l.raw);l.warn='';
-  if(!l.opaque){
-    const m=removeBg(cv,l.tol),rows=Math.floor(cv.height*l.top),n=rows*cv.width;let e=0;
-    for(let i=0;i<n;i++)e+=m[i];
-    const f=e/n;
-    if(f<.9)l.warn='The top '+Math.round(l.top*100)+'% of this layer is only '+Math.round(f*100)+'% empty, so the model probably painted a sky, haze or glow into it. Generate again, or add "no sky, plain white above the scenery" to the notes.';
-  }
-  l.out=makeLoop(l.opaque?fitH(cv):fitLayer(cv,l.hp),l.method,l.blend);
-  paintTiled(l.el.pv,l.out);l.el.dl.disabled=false;
-  setSt(l,l.warn||'Done. Adjust the sliders or generate again.',!!l.warn);
+  if(!l.parts.length)return;
+  l.warn='';let worst=1;
+  const fitted=l.parts.map(raw=>{
+    const cv=toCanvas(raw);
+    if(!l.opaque){
+      const m=removeBg(cv,l.tol,l.enc),rows=Math.floor(cv.height*l.top),n=rows*cv.width;let e=0;
+      for(let i=0;i<n;i++)e+=m[i];
+      worst=Math.min(worst,e/n);
+    }
+    return l.opaque?fitH(cv):fitLayer(cv,l.hp);
+  });
+  if(worst<.9)l.warn='The top '+Math.round(l.top*100)+'% of this layer is only '+Math.round(worst*100)+'% empty, so the model probably painted a sky, haze or glow into it. Generate again, or add "no sky, plain white above the scenery" to the notes. ';
+  l.out=makeLoop(joinParts(fitted),l.method,l.blend);
+  const w=l.out.width,r=STAGE_W/w,narrow=!l.opaque&&w<1500;
+  paintTiled(l.el.pv,l.out);l.el.dl.disabled=false;l.el.rm.disabled=l.parts.length<2;
+  setSt(l,l.warn+'Width '+w+' px, so it repeats '+r.toFixed(1)+' times across the stage'+(l.parts.length>1?' ('+l.parts.length+' images joined)':'')+'.'+(narrow?' That is narrow enough to look repetitive. Press Widen to add a different image.':''),!!l.warn||narrow);
 }
-async function genLayer(l){
+async function gen1(l,add){
+  const c=cfg();
+  const own=add?l.parts[0]:($('useref').checked?firstRaw(l):null),ref=own?refFrom(own):null;
+  const p=`${c.theme}. Art style: ${c.style}. ${l.opaque?'Sky colours: '+c.skypal:'Scenery colours: '+c.scenepal}. ${l.t} ${l.extra} ${l.opaque?'':CUT} ${COMMON}`+(ref?(add?' Use the attached reference image only as a guide for art style, colours and lighting. Create a clearly different arrangement of the same kind of scenery. Do not copy its composition.':' Use the attached reference image only as a guide for art style, colours and lighting. Do not copy its composition.'):'');
+  const j=await api(p,ref),img=await loadImg(j.image,j.mime);
+  if(add)l.parts.push(img);else{l.parts=[img];l.raw=img}
+  process(l);
+}
+async function genLayer(l,add){
   const c=cfg();
   if(!c.theme){setSt(l,'Enter a theme in the Setup tab first.',1);return false}
-  l.busy=true;lock();setSt(l,'Generating. This can take 10 to 40 seconds.');
+  l.busy=true;lock();setSt(l,add?'Generating a second image to widen the layer. This can take 10 to 40 seconds.':'Generating. This can take 10 to 40 seconds.');
   try{
-    const f=$('useref').checked?firstRaw(l):null,ref=f?refFrom(f):null;
-    const p=`${c.theme}. Art style: ${c.style}. ${l.opaque?'Sky colours: '+c.skypal:'Scenery colours: '+c.scenepal}. ${l.t} ${l.extra} ${l.opaque?'':CUT} ${COMMON}`+(ref?' Use the attached reference image only as a guide for art style, colours and lighting. Do not copy its composition.':'');
-    const j=await api(p,ref);
-    l.raw=await loadImg(j.image,j.mime);process(l);return true;
+    await gen1(l,add);
+    if(!add&&$('autow').checked&&!l.opaque){
+      while(l.out.width<STAGE_W&&l.parts.length<3){setSt(l,'Widening: adding image '+(l.parts.length+1)+'. This can take 10 to 40 seconds.');await gen1(l,true)}
+    }
+    return true;
   }catch(e){setSt(l,e.message,1);return false}
   finally{l.busy=false;lock()}
 }
