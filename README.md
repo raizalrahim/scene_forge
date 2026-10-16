@@ -18,6 +18,9 @@ removes the backgrounds, makes the layers loop, and exports a zip.
    - `APP_PASSWORD`    any password you choose
 4. Redeploy, open the site, type the password in the top right corner.
 
+## Scene types
+The Setup tab has a Scene type selector (Nature, Neon city). Each type rewrites the example text, the five layer descriptions and the default layer heights. To add a type, add an entry to `PRESETS` in `index.html` and an option to the `stype` select.
+
 ## First test (cheap)
 1. Setup tab: enter a theme, leave the rest, keep size at 1K.
 2. Scene layers tab: press Generate on "Sky" only. Check it appears.

@@ -49,6 +49,8 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
 <main>
 <section id="s0">
   <div class="panel">
+    <label>Scene type<select id="stype"><option value="nature">Nature (hills and trees)</option><option value="city">Neon city (skyscrapers)</option></select></label>
+    <p class="mute">Changing the scene type replaces the text boxes below, and every layer description and height, with that type's examples.</p>
     <label>Theme<textarea id="theme">a quiet mountain village at dusk</textarea></label>
     <label>Art style<textarea id="style">flat 2D vector game art, clean shapes, soft gradients, gentle painterly lighting</textarea></label>
     <label>Sky colours (used for the sky layer only)<textarea id="skypal">deep purple at the top fading to warm orange and pink at the horizon</textarea></label>
@@ -284,7 +286,7 @@ S.layers.forEach((l,i)=>{
   <div class="ctl"><span>Looping</span><select class="sm"><option value="match">Match &amp; trim (best)</option><option value="mirror">Mirror (always clean)</option><option value="cross">Crossfade (can ghost)</option></select><span></span></div>
   <div class="ctl"><span>Edge blend px</span><input type="range" class="bl" min="0" max="200" step="2" value="${l.blend}"><span>${l.blend}</span></div>
   <div class="row"><button class="gen">Generate</button><button class="wd" disabled>Widen (+1 generation)</button><button class="rm" disabled>Remove last image</button><button class="dl" disabled>Download PNG</button></div>`;
-  l.el={pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),wd:c.querySelector('.wd'),rm:c.querySelector('.rm'),dl:c.querySelector('.dl')};
+  l.el={title:c.querySelector('h3'),hp:c.querySelector('.hp'),pv:c.querySelector('canvas'),st:c.querySelector('.st'),gen:c.querySelector('.gen'),wd:c.querySelector('.wd'),rm:c.querySelector('.rm'),dl:c.querySelector('.dl')};
   l.el.wd.onclick=()=>genLayer(l,true);
   l.el.rm.onclick=()=>{if(l.parts.length>1){l.parts.pop();process(l)}};
   c.querySelector('.ex').oninput=e=>{l.extra=e.target.value};
@@ -341,6 +343,39 @@ async function genLayer(l,add){
 }
 $('genall').onclick=async()=>{for(const l of S.layers){if(l.raw)continue;if(!(await genLayer(l)))break}};
 function dlCanvas(cv,name){cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000)})}
+
+// ---- scene types
+const PRESETS={
+ nature:{
+  theme:$('theme').value,style:$('style').value,skypal:$('skypal').value,scenepal:$('scenepal').value,char:$('cdesc').value,
+  layers:Object.fromEntries(DEFS.map(d=>[d.k,{n:d.n,t:d.t,hp:d.hp||0,top:d.top||0}]))
+ },
+ city:{
+  theme:'a bright neon cyberpunk city of tall skyscrapers at night',
+  style:'flat 2D vector game art, clean crisp shapes, solid saturated neon colours, no outer glow or bloom',
+  skypal:'deep indigo at the top fading to hot magenta and electric cyan at the horizon',
+  scenepal:'dark navy and purple building silhouettes with solid neon pink, cyan and yellow lit windows and signs',
+  char:'a young courier in a dark jacket with glowing neon trim and a backpack',
+  layers:{
+   sky:{n:'Sky',hp:0,top:0,t:'Only the night sky above a city: a smooth gradient with a few thin, flat, stylised clouds or light streaks, filling the entire frame edge to edge. No buildings, no skyline, no ground, nothing touching the bottom edge.'},
+   far:{n:'Far skyline',hp:55,top:.25,t:'A distant city skyline: many tall skyscrapers of different heights drawn as flat, slightly hazy silhouettes with a few tiny lit windows, occupying only the lower 55% of the image, with the bottom edge of the image completely filled by buildings. No hills, no trees, no sky.'},
+   mid:{n:'Mid towers',hp:45,top:.3,t:'Mid-distance skyscrapers and office towers with solid neon window grids, rooftop antennas and a few neon signs, occupying only the lower 45% of the image, with the bottom edge completely filled. No hills, no trees, no houses.'},
+   near:{n:'Near rooftops',hp:30,top:.4,t:'Dark close-up building silhouettes: rooftops, water towers, billboards, neon signs and cables, occupying only the lower 30% of the image, with the bottom edge completely filled and the middle of the frame left empty. No trees, no bushes.'},
+   ground:{n:'Street',hp:8,top:.7,t:'Only a thin city street strip seen from the side: pavement, curb, road markings and a few street lamps, occupying only the bottom 12% of the image. No buildings, no trees.'}
+  }
+ }
+};
+function applyPreset(k){
+  const P=PRESETS[k];
+  $('theme').value=P.theme;$('style').value=P.style;$('skypal').value=P.skypal;$('scenepal').value=P.scenepal;$('cdesc').value=P.char;
+  S.layers.forEach((l,i)=>{
+    const d=P.layers[l.k];l.n=d.n;l.t=d.t;l.hp=d.hp;if(d.top)l.top=d.top;
+    l.el.title.textContent=(i+1)+'. '+d.n;
+    l.el.hp.value=l.hp;l.el.hp.nextElementSibling.textContent=l.hp;
+    if(l.parts.length)process(l);
+  });
+}
+$('stype').onchange=e=>applyPreset(e.target.value);
 
 // ---- character
 for(let i=1;i<=8;i++){$('ccols').add(new Option(i,i));}
