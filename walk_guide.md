@@ -19,10 +19,10 @@ Source: side view, in place, 30 fps, figure about 632 px tall.
 ## Playback speed
 - Frames per second for an N frame cycle = N / 1.27. For 8 frames about 6.3 fps, for 16 frames about 12.6 fps.
 
-## Ground speed so the feet do not slide (starting point, then tune by eye)
-- About 0.77 x the character's height in px per second.
-  Example: a character 220 px tall on the stage suggests about 170 px/s for the layer it walks on.
-  This is an estimate from the foot spread; fine tune the ground layer speed until the feet stop sliding.
+## Ground speed so the feet do not slide
+- Measured by tracking a planted shoe in the clip: about 0.44 x the character's height per second (15 tracks, tightly grouped).
+  Example: a character 220 px tall on the stage suggests about 97 px/s for the layer it walks on.
+  This replaces my earlier estimate of 0.77, which counted the length of the foot and was too high. Fine tune by eye.
 
 ## Prompt text for any image generator
 Side view, facing right, one natural walk cycle in 8 poses: right foot contact, right foot down, right foot passing, right foot up, left foot contact, left foot down, left foot passing, left foot up. Head lowest at contact, highest at passing, arms swinging opposite to the legs, feet on one ground line, same size in every frame.
