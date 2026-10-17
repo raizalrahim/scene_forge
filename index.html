@@ -33,6 +33,7 @@ label.inl{display:flex;gap:8px;align-items:center;font-weight:400}
 .pv canvas{width:100%;height:100%;object-fit:contain}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .ctl{display:grid;grid-template-columns:110px 1fr 40px;gap:8px;align-items:center}
+.th{display:grid;gap:2px;justify-items:center;cursor:pointer;border:2px solid transparent;border-radius:6px;padding:2px;font-size:11px}.th.bad{border-color:var(--bad)}.th.off{opacity:.3}
 .mute{color:var(--mute)}.err{color:var(--bad)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 #log{white-space:pre-wrap;color:var(--mute);margin:0;font-size:12px}
@@ -80,7 +81,11 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
       <label>Sheet aspect ratio<select id="caspect"><option>16:9</option><option>21:9</option><option>1:1</option><option>4:3</option></select></label>
     </div>
     <div class="ctl"><span>BG tolerance</span><input id="ctol" type="range" min="5" max="120" value="40"><span id="ctolv">40</span></div>
-    <div class="row"><button class="pri" id="cgen">Generate walk sheet</button><button id="cdl" disabled>Download sheet PNG</button></div>
+    <label class="inl"><input id="cpose" type="checkbox" checked> Use the natural walking pose reference (only for a 4 x 2 grid). Asks Gemini to draw your character in the same 8 poses as a real walk cycle.</label>
+    <label class="inl"><input id="cenc" type="checkbox" checked> Also remove enclosed white gaps (between legs and arms). Turn off if the character wears white.</label>
+    <div class="row"><button class="pri" id="cgen">Generate walk sheet</button><button id="cdl" disabled>Download sheet PNG</button><button id="cdrop" disabled>Drop inconsistent frames</button><button id="creset" disabled>Restore all frames</button></div>
+    <p class="mute">Frames outlined in red look different from their neighbours, which is what causes jitter. Click a frame to drop or restore it.</p>
+    <div id="cframes" class="row"></div>
     <p id="cst" class="mute">Not generated yet.</p>
   </div>
   <div class="two">
@@ -139,6 +144,8 @@ function findJoin(dA,wA,hA,dB,wB,hB){
   return [bx1,bx0];
 }
 function findSeam(d,w,h){const [x1,x0]=findJoin(d,w,h,d,w,h);return [x0,x1]}
+function circSmooth(a,r){return a.map((_,i)=>{let t=0;for(let k=-r;k<=r;k++)t+=a[(i+k+a.length*4)%a.length];return t/(2*r+1)})}
+function frameScores(dist,n){const s=[];for(let i=0;i<n;i++)s.push((dist(i,(i+n-1)%n)+dist(i,(i+1)%n))/2);return s}
 function contentRows(d,w,h){
   const need=Math.max(6,Math.round(w*.004));let top=-1,bot=-1;
   const cnt=y=>{let n=0;const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)n++;return n};
@@ -157,7 +164,21 @@ function removeBgData(d,w,h,tol,enclosed){
   for(let x=0;x<w;x++){push(x);push((h-1)*w+x)}
   for(let y=0;y<h;y++){push(y*w);push(y*w+w-1)}
   while(qh<qt){const p=q[qh++],x=p%w,y=(p/w)|0;if(x>0)push(p-1);if(x<w-1)push(p+1);if(y>0)push(p-w);if(y<h-1)push(p+w)}
-  if(enclosed){for(let p=0;p<w*h;p++)if(!mask[p]&&dist(p*4)<=tol)mask[p]=1}
+  if(enclosed){
+    const minA=typeof enclosed==='number'&&enclosed>1?enclosed:0,seen=new Uint8Array(w*h),list=new Int32Array(w*h);
+    for(let p0=0;p0<w*h;p0++){
+      if(mask[p0]||seen[p0]||dist(p0*4)>tol)continue;
+      let n=0,sp=0;list[n++]=p0;seen[p0]=1;
+      while(sp<n){
+        const p=list[sp++],x=p%w,y=(p/w)|0;
+        if(x>0){const q=p-1;if(!mask[q]&&!seen[q]&&dist(q*4)<=tol){seen[q]=1;list[n++]=q}}
+        if(x<w-1){const q=p+1;if(!mask[q]&&!seen[q]&&dist(q*4)<=tol){seen[q]=1;list[n++]=q}}
+        if(y>0){const q=p-w;if(!mask[q]&&!seen[q]&&dist(q*4)<=tol){seen[q]=1;list[n++]=q}}
+        if(y<h-1){const q=p+w;if(!mask[q]&&!seen[q]&&dist(q*4)<=tol){seen[q]=1;list[n++]=q}}
+      }
+      if(n>=minA)for(let i=0;i<n;i++)mask[list[i]]=1;
+    }
+  }
   for(let p=0;p<w*h;p++){
     const i=p*4;
     if(mask[p]){d[i+3]=0;continue}
@@ -220,12 +241,13 @@ async function api(prompt,ref,aspect){
   return j;
 }
 const loadImg=(b64,mime)=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('Could not decode the returned image'));i.src='data:'+mime+';base64,'+b64});
-function refFrom(img){
-  const s=Math.min(1,768/Math.max(img.naturalWidth,img.naturalHeight)),c=document.createElement('canvas');
+function refFrom(img,maxDim){
+  const s=Math.min(1,(maxDim||768)/Math.max(img.naturalWidth,img.naturalHeight)),c=document.createElement('canvas');
   c.width=Math.round(img.naturalWidth*s);c.height=Math.round(img.naturalHeight*s);
   const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
   return c.toDataURL('image/jpeg',.8).split(',')[1];
 }
+const loadUrl=u=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('Could not load '+u+'. Make sure the file is deployed next to index.html.'));i.src=u});
 const toCanvas=img=>{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);return c};
 function firstRaw(except){const l=S.layers.find(x=>x.raw&&x!==except);return l?l.raw:null}
 function removeBg(cv,tol,enc){const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),m=removeBgData(id.data,cv.width,cv.height,tol,enc);g.putImageData(id,0,0);return m}
@@ -387,24 +409,26 @@ $('cfps').oninput=e=>{$('cfpsv').textContent=e.target.value};
 const cst=(m,err)=>{$('cst').textContent=m;$('cst').className=err?'err':'mute'};
 $('cgen').onclick=async()=>{
   const c=cfg(),cols=+$('ccols').value,rows=+$('crows').value,n=cols*rows;
+  const poses=n===8?' Use these poses in order: right foot contact, right foot down, right foot passing, right foot up, left foot contact, left foot down, left foot passing, left foot up.':'';
   S.ch.busy=true;lock();cst('Generating. This can take 10 to 40 seconds.');
   try{
-    const f=$('useref').checked?firstRaw(null):null,ref=f?refFrom(f):null;
-    const p=`Character sprite sheet for a 2D side-scrolling game. Character: ${$('cdesc').value.trim()}. Art style: ${c.style}. Show exactly ${n} frames of one smooth side-view walk cycle, arranged in a grid of ${cols} columns and ${rows} rows, evenly spaced with clear empty gaps between frames and nothing overlapping. It is the same character at the same size and proportions in every frame, facing right, full body visible, feet on a consistent ground line. ${BG} No text, no labels, no grid lines, no shadows.`+(ref?' Use the attached reference image only as a guide for art style and colours.':'');
+    const usePose=$('cpose').checked&&cols===4&&rows===2;
+    const f=$('useref').checked?firstRaw(null):null;
+    const ref=usePose?refFrom(await loadUrl('walk_reference_gray.png'),1280):(f?refFrom(f):null);
+    const poseTxt=' The attached image is a POSE REFERENCE SHEET: 8 frames of one natural walk cycle in a grid of 4 columns and 2 rows. Draw your character in exactly these 8 poses, in the same order and the same grid layout, matching each frame\'s leg positions, arm swing, body lean and head height. Use the reference only for the poses. Do not copy its clothing, face, hair or colours; the character must look like the description above.';
+    const p=`Character sprite sheet for a 2D side-scrolling game. Character: ${$('cdesc').value.trim()}. Art style: ${c.style}. Show exactly ${n} frames of one smooth side-view walk cycle, arranged in a grid of ${cols} columns and ${rows} rows, evenly spaced with clear empty gaps between frames and nothing overlapping. It is the same character at the same size and proportions in every frame, facing right, full body visible, feet on a consistent ground line. Frames read left to right, then top to bottom, and the last frame must flow smoothly back into the first so the walk loops.${poses} Keep the head at the same height and the body at the same size in every frame, and centre each frame in its own equal cell. ${BG} No text, no labels, no grid lines, no shadows.`+(usePose?poseTxt:(ref?' Use the attached reference image only as a guide for art style and colours.':''));
     const j=await api(p,ref,$('caspect').value);
     S.ch.raw=await loadImg(j.image,j.mime);processChar();
   }catch(e){cst(e.message,1)}
   finally{S.ch.busy=false;lock()}
 };
 function processChar(){
-  paintFit($('craw'),toCanvas(S.ch.raw));const cv=toCanvas(S.ch.raw);removeBg(cv,+$('ctol').value);
-  const want=+$('ccols').value*+$('crows').value;
-  try{
-    const r=buildSheet(cv);S.ch.cells=r.cells;S.ch.info=r;S.ch.sheet=r.sheet;paintFit($('csheet'),r.sheet);$('cdl').disabled=false;
-    cst('Found '+r.cells.length+' frames'+(r.cells.length===want?'.':' (you asked for '+want+'). If frames merged or split, adjust the tolerance or generate again.')+' Sheet grid: '+r.cols+' columns x '+r.rows+' rows, cell '+r.cw+' x '+r.ch+' px.');
-  }catch(e){cst(e.message,1)}
+  paintFit($('craw'),toCanvas(S.ch.raw));
+  const cv=toCanvas(S.ch.raw),area=Math.max(40,Math.round(cv.width*cv.height*6e-5));
+  removeBg(cv,+$('ctol').value,$('cenc').checked?area:0);
+  try{S.ch.all=extractFrames(cv);S.ch.off=new Set();refreshChar()}catch(e){cst(e.message,1)}
 }
-function buildSheet(cv){
+function extractFrames(cv){
   const g=cv.getContext('2d'),id=g.getImageData(0,0,cv.width,cv.height),boxes=detectBoxes(id.data,cv.width,cv.height);
   if(!boxes.length)throw new Error('No characters found. Lower the tolerance or generate again.');
   const fr=boxes.map(([x0,y0,x1,y1])=>{
@@ -413,14 +437,56 @@ function buildSheet(cv){
     for(let i=3;i<top.length;i+=4)if(top[i]>10){sx+=((i-3)/4)%w;n++}
     return{c,w,h,hx:n?sx/n:w/2};
   });
-  const hs=fr.map(f=>f.h).sort((a,b)=>a-b),TH=hs[hs.length>>1];let L=0,R=0;
-  fr.forEach(f=>{f.s=TH/f.h;L=Math.max(L,f.hx*f.s);R=Math.max(R,(f.w-f.hx)*f.s)});
-  const CW=Math.ceil(L+R)+16,CH=TH+16,ax=Math.ceil(L)+8;
-  const cells=fr.map(f=>{const c=document.createElement('canvas');c.width=CW;c.height=CH;const g2=c.getContext('2d');g2.imageSmoothingQuality='high';g2.drawImage(f.c,Math.round(ax-f.hx*f.s),CH-8-TH,Math.round(f.w*f.s),TH);return c});
-  const cols=Math.min(cells.length,8),rows=Math.ceil(cells.length/cols),sh=document.createElement('canvas');sh.width=CW*cols;sh.height=CH*rows;
-  const sg=sh.getContext('2d');cells.forEach((c,i)=>sg.drawImage(c,(i%cols)*CW,Math.floor(i/cols)*CH));
-  return{sheet:sh,cells,cols,rows,cw:CW,ch:CH,ax,base:CH-8};
+  const hs=fr.map(f=>f.h).sort((a,b)=>a-b),med=hs[hs.length>>1];
+  const sm=circSmooth(fr.map(f=>med/f.h),2);
+  let L=0,R=0,T=0;
+  fr.forEach((f,i)=>{f.s=sm[i];L=Math.max(L,f.hx*f.s);R=Math.max(R,(f.w-f.hx)*f.s);T=Math.max(T,f.h*f.s)});
+  const CW=Math.ceil(L+R)+16,CH=Math.ceil(T)+16,ax=Math.ceil(L)+8;
+  const cells=fr.map(f=>{
+    const c=document.createElement('canvas');c.width=CW;c.height=CH;const g2=c.getContext('2d');g2.imageSmoothingQuality='high';
+    const dw=Math.round(f.w*f.s),dh=Math.round(f.h*f.s);
+    g2.drawImage(f.c,Math.round(ax-f.hx*f.s),CH-8-dh,dw,dh);return c;
+  });
+  return{cells,cw:CW,ch:CH,ax,base:CH-8};
 }
+function smallPremult(c){
+  const t=document.createElement('canvas');t.width=36;t.height=40;const g=t.getContext('2d');g.drawImage(c,0,0,36,40);
+  const d=g.getImageData(0,0,36,40).data,o=new Float32Array(36*40*4);
+  for(let i=0;i<d.length;i+=4){const a=d[i+3]/255;o[i]=d[i]*a;o[i+1]=d[i+1]*a;o[i+2]=d[i+2]*a;o[i+3]=d[i+3]}
+  return o;
+}
+function refreshChar(){
+  const A=S.ch.all,idx=A.cells.map((_,i)=>i).filter(i=>!S.ch.off.has(i));
+  if(idx.length<2){S.ch.off=new Set();return refreshChar()}
+  const inc=idx.map(i=>A.cells[i]),sm=inc.map(smallPremult);
+  const dist=(i,j)=>{let t=0;const a=sm[i],b=sm[j];for(let k=0;k<a.length;k++)t+=Math.abs(a[k]-b[k]);return t/a.length};
+  const sc=frameScores(dist,inc.length),med=[...sc].sort((a,b)=>a-b)[sc.length>>1]||1;
+  const cols=Math.min(inc.length,8),rows=Math.ceil(inc.length/cols),sh=document.createElement('canvas');
+  sh.width=A.cw*cols;sh.height=A.ch*rows;const sg=sh.getContext('2d');
+  inc.forEach((c,i)=>sg.drawImage(c,(i%cols)*A.cw,Math.floor(i/cols)*A.ch));
+  S.ch.cells=inc;S.ch.sheet=sh;S.ch.info={cols,rows,cw:A.cw,ch:A.ch,ax:A.ax,base:A.base};S.ch.scores=new Map(idx.map((i,k)=>[i,sc[k]]));S.ch.med=med;
+  paintFit($('csheet'),sh);$('cdl').disabled=false;$('creset').disabled=false;
+  const bad=idx.filter(i=>S.ch.scores.get(i)>1.5*med);$('cdrop').disabled=!bad.length;
+  const box=$('cframes');box.innerHTML='';
+  A.cells.forEach((c,i)=>{
+    const d=document.createElement('div'),off=S.ch.off.has(i),b=!off&&S.ch.scores.get(i)>1.5*med;
+    d.className='th'+(off?' off':'')+(b?' bad':'');
+    const t=document.createElement('canvas');t.width=54;t.height=Math.round(54*A.ch/A.cw);t.getContext('2d').drawImage(c,0,0,t.width,t.height);
+    const l=document.createElement('span');l.textContent=(i+1)+(off?' off':'');
+    d.append(t,l);d.onclick=()=>{S.ch.off.has(i)?S.ch.off.delete(i):S.ch.off.add(i);refreshChar()};
+    box.appendChild(d);
+  });
+  const want=+$('ccols').value*+$('crows').value;
+  cst('Found '+A.cells.length+' frames'+(A.cells.length===want?'':' (you asked for '+want+')')+', using '+inc.length+'. '+(bad.length?bad.length+' look inconsistent (red outline), which shows up as jitter. Press "Drop inconsistent frames" or click frames to drop them.':'No frames stand out as inconsistent.')+' Sheet grid: '+cols+' x '+rows+', cell '+A.cw+' x '+A.ch+' px.');
+}
+$('cdrop').onclick=()=>{
+  const A=S.ch.all,med=S.ch.med;
+  const worst=[...S.ch.scores.entries()].filter(([,v])=>v>1.5*med).sort((a,b)=>b[1]-a[1]);
+  for(const [i] of worst){if(A.cells.length-S.ch.off.size<=4)break;S.ch.off.add(i)}
+  refreshChar();
+};
+$('creset').onclick=()=>{S.ch.off=new Set();refreshChar()};
+$('cenc').onchange=()=>{if(S.ch.raw)processChar()};
 $('cdl').onclick=()=>dlCanvas(S.ch.sheet,'walk_sheet.png');
 
 // ---- preview loop (character animation + parallax stage)
