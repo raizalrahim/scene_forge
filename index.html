@@ -101,6 +101,7 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
   <div class="panel">
     <label>Vehicle description<textarea id="vdesc">a rugged two-door off-road SUV with a spare tyre on the back</textarea></label>
     <div class="row"><button class="pri" id="vgen">Generate with Gemini</button><label class="btn">Upload a vehicle image<input id="vfile" type="file" accept="image/*" hidden></label><button id="vflip" disabled>Flip left / right</button></div>
+    <label class="inl"><input id="vrider" type="checkbox" checked> Include a rider or driver (motorbike rider, car driver). Untick for an empty vehicle.</label>
     <label class="inl"><input id="vdirchk" type="checkbox" checked> Check the direction automatically and flip the vehicle so it faces right</label>
     <label class="inl"><input id="venc" type="checkbox" checked> Also remove enclosed white gaps (between the wheels and the body). Turn off if the windows are white.</label>
     <div class="ctl"><span>BG tolerance</span><input id="vtol" type="range" min="5" max="120" value="40"><span id="vtolv">40</span></div>
@@ -218,6 +219,12 @@ function detectWheels(d,w,h){
     }
   }
   return null;
+}
+function vehiclePrompt(desc,style,rider,BG){
+  const who=rider
+    ?' A rider or driver is shown on or in the vehicle, in the same flat side profile and facing right (for a motorcycle the rider sits on it with hands on the handlebars; for a car or truck the driver is visible through the side window). Dress the rider in coloured or dark clothing and a coloured helmet, with nothing white, so it does not blend into the white background.'
+    :' No rider and no driver.';
+  return 'A single '+desc+', drawn in a perfectly flat, side-on profile view. IMPORTANT: the vehicle FACES RIGHT. Its front (bonnet or hood, headlights, front bumper) is on the RIGHT side of the image and its rear (boot, tail lights) is on the LEFT side. If your first idea faces left, mirror it so it faces right. The whole vehicle is visible, with both wheels fully visible, round and not hidden.'+who+' Art style: '+style+'. '+BG+' No shadows, no ground, no motion blur, no text.';
 }
 function wheelPlan(N,fps,rps,spokes,dir){
   const per=rps*360/fps,loop=N*per,patt=spokes>0?360/spokes:null;let total=loop;
@@ -652,7 +659,7 @@ async function autoFace(){
 $('vgen').onclick=async()=>{
   const c=cfg();S.vbusy=true;lock();vst('Generating. This can take 10 to 40 seconds.');
   try{
-    const p=`A single ${$('vdesc').value.trim()}, drawn in a perfectly flat, side-on profile view. IMPORTANT: the vehicle FACES RIGHT. Its front (bonnet or hood, headlights, front bumper) is on the RIGHT side of the image and its rear (boot, tail lights) is on the LEFT side. If your first idea faces left, mirror it so it faces right. The whole vehicle is visible, with both wheels fully visible, round and not hidden. Art style: ${c.style}. ${BG} No driver, no shadows, no ground, no motion blur, no text.`;
+    const p=vehiclePrompt($('vdesc').value.trim(),c.style,$('vrider').checked,BG);
     const j=await api(p,null,'16:9');V.raw=await loadImg(j.image,j.mime);V.manual=false;vst('Checking which way it faces...');await autoFace();processVehicle();
   }catch(e){vst(e.message,1)}
   finally{S.vbusy=false;lock()}
