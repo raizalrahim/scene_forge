@@ -14,6 +14,33 @@ module.exports = async (req, res) => {
     return res.status(401).json({ error: 'Wrong password.' });
   }
   const b = req.body || {};
+  if (b.mode === 'direction') {
+    // Optional helper: asks a text model which way a vehicle faces. Model name can be changed with GEMINI_TEXT_MODEL.
+    if (typeof b.ref !== 'string' || !b.ref || b.ref.length > 3000000) return res.status(400).json({ error: 'Missing image.' });
+    const tm = process.env.GEMINI_TEXT_MODEL || 'gemini-2.5-flash';
+    const ctrl2 = new AbortController();
+    const timer2 = setTimeout(() => ctrl2.abort(), 25000);
+    try {
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + tm + ':generateContent', {
+        method: 'POST', signal: ctrl2.signal,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [
+            { text: 'This is a side view of a vehicle. Which side of the image does the FRONT of the vehicle point to (the bonnet or hood, headlights and front bumper, as opposed to the boot, tail lights and rear)? Answer with exactly one word: LEFT or RIGHT.' },
+            { inlineData: { mimeType: 'image/jpeg', data: b.ref } }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 200 }
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return res.status(502).json({ error: 'Google API error ' + r.status + ': ' + ((j.error && j.error.message) || '') });
+      const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+      const txt = parts.map(p => p.text || '').join(' ').trim();
+      const answer = /^\W*right/i.test(txt) ? 'right' : /^\W*left/i.test(txt) ? 'left' : null;
+      return res.status(200).json({ answer, raw: txt.slice(0, 40) });
+    } catch (e) {
+      return res.status(504).json({ error: 'Direction check failed: ' + e.message });
+    } finally { clearTimeout(timer2); }
+  }
   const model = MODELS.includes(b.model) ? b.model : MODELS[0];
   const aspectRatio = ASPECTS.includes(b.aspect) ? b.aspect : '16:9';
   const imageSize = SIZES.includes(b.size) ? b.size : '1K';
