@@ -24,6 +24,9 @@ The Setup tab has a Scene type selector (Nature, Neon city). Each type rewrites 
 ## Character sheet tips
 If the walk jitters: press "Drop inconsistent frames" (frames outlined in red differ from their neighbours), or click frames to drop them one by one. An 8 frame sheet (4 x 2) usually gives the most consistent cycle.
 
+## Vehicles
+The Vehicle tab turns one side-on vehicle picture into a looping sprite sheet: the wheels spin and the body bounces, using numbers measured from a real clip (see vehicle_guide.md). Generate the vehicle with Gemini or upload your own.
+
 ## First test (cheap)
 1. Setup tab: enter a theme, leave the rest, keep size at 1K.
 2. Scene layers tab: press Generate on "Sky" only. Check it appears.

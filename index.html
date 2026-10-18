@@ -99,6 +99,37 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
 
 <section id="s3" hidden>
   <div class="panel">
+    <label>Vehicle description<textarea id="vdesc">a rugged two-door off-road SUV with a spare tyre on the back</textarea></label>
+    <div class="row"><button class="pri" id="vgen">Generate with Gemini</button><label class="btn">Upload a vehicle image<input id="vfile" type="file" accept="image/*" hidden></label></div>
+    <div class="ctl"><span>BG tolerance</span><input id="vtol" type="range" min="5" max="120" value="40"><span id="vtolv">40</span></div>
+    <p id="vst" class="mute">Generate or upload one side-on image of a vehicle facing right on a plain white background. The app spins the wheels and bounces the body. Nothing else is generated, so every frame matches.</p>
+  </div>
+  <div class="two">
+    <div class="card"><h3>Place the wheels</h3>
+      <div class="pv"><canvas id="vcv" width="640" height="360" style="cursor:crosshair"></canvas></div>
+      <div class="row"><button id="vauto">Find the wheels</button><button id="vrear">Click rear wheel</button><button id="vfront">Click front wheel</button></div>
+      <div class="ctl"><span>Wheel radius %</span><input id="vrad" type="range" min="3" max="25" step="0.5" value="13"><span id="vradv">13</span></div>
+      <div class="ctl"><span>Spinning part %</span><input id="vrim" type="range" min="30" max="95" value="85"><span id="vrimv">85</span></div>
+      <p class="mute">Green circle = the wheel, yellow = the part that spins. The yellow circle should cover the rim and spokes and stay inside the tyre. If the spokes look broken while it turns, make it a little bigger.</p></div>
+    <div class="card"><h3>Animation</h3>
+      <div class="ctl"><span>Frames</span><select id="vN"><option value="8">8</option><option value="16">16</option></select><span></span></div>
+      <div class="ctl"><span>Frame rate</span><input id="vfps" type="range" min="12" max="30" value="24"><span id="vfpsv">24</span></div>
+      <div class="ctl"><span>Wheel turns/s</span><input id="vrps" type="range" min="0.2" max="3" step="0.01" value="0.93"><span id="vrpsv">0.93</span></div>
+      <div class="ctl"><span>Spokes (0 = unknown)</span><input id="vspk" type="range" min="0" max="12" value="5"><span id="vspkv">5</span></div>
+      <div class="ctl"><span>Direction</span><select id="vdir"><option value="1">Forward</option><option value="-1">Backward</option></select><span></span></div>
+      <div class="ctl"><span>Bounce %</span><input id="vbounce" type="range" min="0" max="5" step="0.1" value="1.7"><span id="vbouncev">1.7</span></div>
+      <div class="ctl"><span>Bounces per loop</span><input id="vbc" type="range" min="1" max="4" value="1"><span id="vbcv">1</span></div>
+      <div class="ctl"><span>Pitch deg</span><input id="vpitch" type="range" min="0" max="2" step="0.05" value="0.2"><span id="vpitchv">0.2</span></div>
+      <div class="ctl"><span>Bump %</span><input id="vbump" type="range" min="0" max="15" step="0.5" value="0"><span id="vbumpv">0</span></div>
+      <p id="vinfo" class="mute"></p></div>
+    <div class="card"><h3>Preview</h3><div class="pv"><canvas id="vprev" width="480" height="270"></canvas></div>
+      <div class="row"><button id="vdl" disabled>Download sheet PNG</button></div></div>
+  </div>
+</section>
+
+<section id="s4" hidden>
+  <div class="panel">
+    <label>Sprite in the preview<select id="pvsrc"><option value="ch">Character</option><option value="veh">Vehicle</option></select></label>
     <canvas id="stage" class="stage" width="640" height="360"></canvas>
     <p class="mute">Live preview of the accepted layers scrolling behind the character. Real speeds are set later in your parallax app.</p>
     <div class="row"><button class="pri" id="zip">Download project zip</button><span id="zst" class="mute"></span></div>
@@ -147,6 +178,52 @@ function findJoin(dA,wA,hA,dB,wB,hB){
 function findSeam(d,w,h){const [x1,x0]=findJoin(d,w,h,d,w,h);return [x0,x1]}
 function circSmooth(a,r){return a.map((_,i)=>{let t=0;for(let k=-r;k<=r;k++)t+=a[(i+k+a.length*4)%a.length];return t/(2*r+1)})}
 function frameScores(dist,n){const s=[];for(let i=0;i<n;i++)s.push((dist(i,(i+n-1)%n)+dist(i,(i+1)%n))/2);return s}
+function alphaBBox(d,w,h){
+  const need=3;let x0=w,x1=-1,y0=h,y1=-1;
+  const rc=new Int32Array(h),cc=new Int32Array(w);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(d[(y*w+x)*4+3]>10){rc[y]++;cc[x]++}
+  for(let y=0;y<h;y++)if(rc[y]>=need){y0=Math.min(y0,y);y1=Math.max(y1,y)}
+  for(let x=0;x<w;x++)if(cc[x]>=need){x0=Math.min(x0,x);x1=Math.max(x1,x)}
+  return [x0,y0,x1,y1];
+}
+function detectWheels(d,w,h){
+  // circle search on image edges (works for dark, grey or coloured tyres); returns [{cx,cy,r},{cx,cy,r}] left to right, or null
+  const f=2,W=Math.floor(w/f),Hh=Math.floor(h/f),[bx0,by0,bx1,by1]=alphaBBox(d,w,h),vw=bx1-bx0+1,vh=by1-by0+1;
+  const g=new Float32Array(W*Hh);
+  for(let y=0;y<Hh;y++)for(let x=0;x<W;x++){const i=((y*f)*w+x*f)*4,a=d[i+3]/255;g[y*W+x]=((d[i]+d[i+1]+d[i+2])/3)*a+255*(1-a)}
+  const rmin=Math.max(5,Math.round(vw*0.05/f)),rmax=Math.round(vw*0.16/f),nr=Math.floor((rmax-rmin)/2)+1;
+  const acc=new Float32Array(W*Hh*nr),ymin=Math.floor((by0+vh*0.35)/f);
+  for(let y=1;y<Hh-1;y++)for(let x=1;x<W-1;x++){
+    const gx=g[y*W+x+1]-g[y*W+x-1]+0.5*(g[(y-1)*W+x+1]-g[(y-1)*W+x-1]+g[(y+1)*W+x+1]-g[(y+1)*W+x-1]);
+    const gy=g[(y+1)*W+x]-g[(y-1)*W+x]+0.5*(g[(y+1)*W+x-1]-g[(y-1)*W+x-1]+g[(y+1)*W+x+1]-g[(y-1)*W+x+1]);
+    const mag=Math.hypot(gx,gy);if(mag<30)continue;
+    const ux=gx/mag,uy=gy/mag;
+    for(let k=0;k<nr;k++){const r=rmin+2*k;
+      for(const sg of [1,-1]){const cx=Math.round(x+sg*ux*r),cy=Math.round(y+sg*uy*r);if(cx<0||cy<ymin||cx>=W||cy>=Hh)continue;acc[(cy*W+cx)*nr+k]+=1}}
+  }
+  const peaks=[];
+  for(let cy=ymin;cy<Hh;cy++)for(let cx=0;cx<W;cx++){
+    let best=0,bk=0;for(let k=0;k<nr;k++){const v=acc[(cy*W+cx)*nr+k]/(rmin+2*k);if(v>best){best=v;bk=k}}
+    if(best>0.9){for(let k=nr-1;k>bk;k--){if(acc[(cy*W+cx)*nr+k]/(rmin+2*k)>=0.6*best){bk=k;break}}   // prefer the outermost strong circle (the tyre, not the rim)
+      peaks.push({score:best,cx:cx*f,cy:cy*f,r:(rmin+2*bk)*f})}
+  }
+  peaks.sort((a,b)=>b.score-a.score);
+  const top=peaks.slice(0,4000);
+  for(const A of top){
+    if(A.cx<bx0||A.cx>bx1)continue;
+    for(const B of top){
+      if(Math.abs(A.cx-B.cx)>0.35*vw&&Math.abs(A.cy-B.cy)<0.12*vh&&Math.abs(A.r-B.r)<0.25*Math.max(A.r,B.r))return [A,B].sort((p,q)=>p.cx-q.cx);
+    }
+  }
+  return null;
+}
+function wheelPlan(N,fps,rps,spokes,dir){
+  const per=rps*360/fps,loop=N*per,patt=spokes>0?360/spokes:null;let total=loop;
+  if(patt)total=Math.max(1,Math.round(loop/patt))*patt;
+  return {step:(dir<0?-1:1)*total/N,total,patt,per};
+}
+function bounceY(i,N,cycles,amp){return -amp*Math.sin(2*Math.PI*cycles*i/N)}
+function bumpShape(i,N){const c=N*0.3,sg=N*0.1;return Math.exp(-Math.pow((i-c)/sg,2))}
 function contentRows(d,w,h){
   const need=Math.max(6,Math.round(w*.004));let top=-1,bot=-1;
   const cnt=y=>{let n=0;const o=y*w*4+3;for(let x=0;x<w;x++)if(d[o+x*4]>10)n++;return n};
@@ -226,7 +303,7 @@ const log=m=>{$('log').textContent=m};
 const cfg=()=>({theme:$('theme').value.trim(),style:$('style').value.trim(),skypal:$('skypal').value.trim(),scenepal:$('scenepal').value.trim()});
 
 // ---- tabs
-const TABS=['1. Setup','2. Scene layers','3. Character','4. Preview & export'];
+const TABS=['1. Setup','2. Scene layers','3. Character','4. Vehicle','5. Preview & export'];
 TABS.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>show(i);$('tabs').appendChild(b)});
 function show(n){TABS.forEach((_,i)=>{$('s'+i).hidden=i!==n;$('tabs').children[i].classList.toggle('on',i===n)});S.tab=n}
 show(0);
@@ -323,7 +400,7 @@ S.layers.forEach((l,i)=>{
   $('cards').appendChild(c);
 });
 function setSt(l,m,err){l.el.st.textContent=m;l.el.st.className='st '+(err?'err':'mute')}
-function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy;S.layers.forEach(l=>{l.el.gen.disabled=b;l.el.wd.disabled=b||!l.parts.length||l.opaque||l.parts.length>=3;if(b)l.el.rm.disabled=true;else l.el.rm.disabled=l.parts.length<2});$('genall').disabled=b;$('cgen').disabled=b}
+function lock(){const b=S.layers.some(l=>l.busy)||S.ch.busy||S.vbusy;S.layers.forEach(l=>{l.el.gen.disabled=b;l.el.wd.disabled=b||!l.parts.length||l.opaque||l.parts.length>=3;if(b)l.el.rm.disabled=true;else l.el.rm.disabled=l.parts.length<2});$('genall').disabled=b;$('cgen').disabled=b;$('vgen').disabled=b}
 const STAGE_W=1920;
 function process(l){
   if(!l.parts.length)return;
@@ -490,6 +567,83 @@ $('creset').onclick=()=>{S.ch.off=new Set();refreshChar()};
 $('cenc').onchange=()=>{if(S.ch.raw)processChar()};
 $('cdl').onclick=()=>dlCanvas(S.ch.sheet,'walk_sheet.png');
 
+// ---- vehicle rig
+const V={raw:null,base:null,wheels:[{cx:0,cy:0},{cx:0,cy:0}],mode:null,manual:false};
+S.veh=null;S.vbusy=false;
+const vst=(m,err)=>{$('vst').textContent=m;$('vst').className=err?'err':'mute'};
+const vv=id=>+$(id).value;
+['vrad','vrim','vfps','vrps','vspk','vbounce','vbc','vpitch','vbump'].forEach(id=>{
+  const el=$(id),lab=$(id+'v');el.oninput=()=>{lab.textContent=el.value;redrawVeh();buildVehicle()};
+});
+$('vtol').oninput=e=>{$('vtolv').textContent=e.target.value};$('vtol').onchange=()=>processVehicle();
+$('vN').onchange=()=>buildVehicle();$('vdir').onchange=()=>buildVehicle();
+function vmap(){const cv=$('vcv'),b=V.base,s=Math.min(cv.width/b.width,cv.height/b.height)*0.96;return{s,ox:(cv.width-b.width*s)/2,oy:(cv.height-b.height*s)/2}}
+function redrawVeh(){
+  const cv=$('vcv'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);if(!V.base)return;
+  const {s,ox,oy}=vmap();g.drawImage(V.base,ox,oy,V.base.width*s,V.base.height*s);
+  const R=vv('vrad')/100*V.base.width,rr=R*vv('vrim')/100;g.lineWidth=2;
+  V.wheels.forEach(w=>{const x=ox+w.cx*s,y=oy+w.cy*s;
+    g.strokeStyle='#2ecc71';g.beginPath();g.arc(x,y,R*s,0,7);g.stroke();
+    g.strokeStyle='#f1c40f';g.beginPath();g.arc(x,y,rr*s,0,7);g.stroke();
+    g.beginPath();g.moveTo(x-5,y);g.lineTo(x+5,y);g.moveTo(x,y-5);g.lineTo(x,y+5);g.stroke()});
+}
+function autoWheels(){
+  const b=V.base,d=b.getContext('2d').getImageData(0,0,b.width,b.height).data,wh=detectWheels(d,b.width,b.height);
+  if(wh){V.wheels=[{cx:wh[0].cx,cy:wh[0].cy},{cx:wh[1].cx,cy:wh[1].cy}];const r=(wh[0].r+wh[1].r)/2/b.width*100;$('vrad').value=Math.max(3,Math.min(25,r)).toFixed(1);$('vradv').textContent=$('vrad').value;return true}
+  V.wheels=[{cx:b.width*.24,cy:b.height*.78},{cx:b.width*.76,cy:b.height*.78}];return false;
+}
+function processVehicle(){
+  if(!V.raw)return;
+  const cv=toCanvas(V.raw);removeBg(cv,vv('vtol'),0);
+  const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data,[x0,y0,x1,y1]=alphaBBox(d,cv.width,cv.height);
+  if(x1<=x0||y1<=y0){vst('No vehicle found. Lower the tolerance or try another image.',1);return}
+  const w=x1-x0+1,h=y1-y0+1,sc=Math.min(1,720/w),o=document.createElement('canvas');o.width=Math.round(w*sc);o.height=Math.round(h*sc);
+  const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,x0,y0,w,h,0,0,o.width,o.height);V.base=o;
+  let msg='Vehicle ready, '+o.width+' x '+o.height+' px. ';
+  if(!V.manual){msg+=autoWheels()?'Wheels found automatically. Check the circles and adjust if needed.':'Could not find the wheels. Press "Click rear wheel" and "Click front wheel" to place them.'}
+  vst(msg);redrawVeh();buildVehicle();
+}
+$('vauto').onclick=()=>{if(!V.base)return;vst(autoWheels()?'Wheels found. Check the circles.':'Could not find the wheels. Place them by clicking.',0);V.manual=false;redrawVeh();buildVehicle()};
+$('vrear').onclick=()=>{V.mode='rear';$('vrear').classList.add('on');$('vfront').classList.remove('on')};
+$('vfront').onclick=()=>{V.mode='front';$('vfront').classList.add('on');$('vrear').classList.remove('on')};
+$('vcv').onclick=e=>{
+  if(!V.base||!V.mode)return;
+  const cv=$('vcv'),r=cv.getBoundingClientRect(),{s,ox,oy}=vmap(),px=(e.clientX-r.left)*cv.width/r.width,py=(e.clientY-r.top)*cv.height/r.height;
+  const w=V.wheels[V.mode==='rear'?0:1];w.cx=(px-ox)/s;w.cy=(py-oy)/s;V.mode=null;V.manual=true;
+  $('vrear').classList.remove('on');$('vfront').classList.remove('on');redrawVeh();buildVehicle();
+};
+function buildVehicle(){
+  const b=V.base;if(!b)return;
+  const N=+$('vN').value,fps=vv('vfps'),plan=wheelPlan(N,fps,vv('vrps'),vv('vspk'),+$('vdir').value);
+  const W0=b.width,H0=b.height,amp=vv('vbounce')/100*H0,bump=vv('vbump')/100*H0,pitch=vv('vpitch')*Math.PI/180,bc=vv('vbc');
+  const pad=Math.ceil(amp+bump+0.5*W0*Math.sin(pitch+bump/(0.5*W0))+8),CW=W0+2*pad,CH=H0+2*pad;
+  const R=vv('vrad')/100*W0,rr=Math.max(4,R*vv('vrim')/100);
+  const discs=V.wheels.map(w=>{const c=document.createElement('canvas');c.width=c.height=Math.ceil(2*rr);const g=c.getContext('2d');g.drawImage(b,rr-w.cx,rr-w.cy);g.globalCompositeOperation='destination-in';const gr=g.createRadialGradient(rr,rr,rr*0.75,rr,rr,rr);gr.addColorStop(0,'rgba(0,0,0,1)');gr.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=gr;g.fillRect(0,0,c.width,c.height);return c});
+  const cells=[];
+  for(let i=0;i<N;i++){
+    const c=document.createElement('canvas');c.width=CW;c.height=CH;const g=c.getContext('2d');g.imageSmoothingQuality='high';
+    const bs=bumpShape(i,N),by=bounceY(i,N,bc,amp)-bump*bs,ang=pitch*Math.cos(2*Math.PI*bc*i/N)-(bump/(0.5*W0))*bs;
+    g.translate(CW/2,pad+H0/2+by);g.rotate(ang);g.translate(-W0/2,-H0/2);g.drawImage(b,0,0);
+    V.wheels.forEach((w,k)=>{g.save();g.translate(w.cx,w.cy);g.rotate(i*plan.step*Math.PI/180);g.drawImage(discs[k],-rr,-rr);g.restore()});
+    cells.push(c);
+  }
+  const cols=Math.min(N,8),rows=Math.ceil(N/cols),sh=document.createElement('canvas');sh.width=CW*cols;sh.height=CH*rows;const sg=sh.getContext('2d');
+  cells.forEach((c,i)=>sg.drawImage(c,(i%cols)*CW,Math.floor(i/cols)*CH));
+  S.veh={cells,sheet:sh,info:{cols,rows,cw:CW,ch:CH,ax:CW/2,base:CH-pad,vh:H0,tall:0.2}};$('vdl').disabled=false;
+  if(!S.ch.cells||!S.ch.cells.length)$('pvsrc').value='veh';
+  $('vinfo').textContent=N+' frames in '+cols+' columns x '+rows+' rows, each '+CW+' x '+CH+' px. Loop length '+(N/fps).toFixed(2)+' s. The wheels turn '+plan.total.toFixed(0)+' degrees per loop'+(plan.patt?' ('+Math.round(plan.total/plan.patt)+' spoke repeats of '+plan.patt.toFixed(0)+' degrees, so it loops cleanly)':'')+', '+Math.abs(plan.step).toFixed(1)+' degrees per frame.';
+}
+$('vgen').onclick=async()=>{
+  const c=cfg();S.vbusy=true;lock();vst('Generating. This can take 10 to 40 seconds.');
+  try{
+    const p=`A single ${$('vdesc').value.trim()}, drawn in a perfectly flat side-on view facing right, the whole vehicle visible with both wheels fully visible, round and not hidden. Art style: ${c.style}. ${BG} No driver, no shadows, no ground, no motion blur, no text.`;
+    const j=await api(p,null,'16:9');V.raw=await loadImg(j.image,j.mime);V.manual=false;processVehicle();
+  }catch(e){vst(e.message,1)}
+  finally{S.vbusy=false;lock()}
+};
+$('vfile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const img=new Image();img.onload=()=>{V.raw=img;V.manual=false;processVehicle()};img.src=URL.createObjectURL(f)};
+$('vdl').onclick=()=>{if(S.veh)dlCanvas(S.veh.sheet,'vehicle_sheet.png')};
+
 // ---- preview loop (character animation + parallax stage)
 const pos=S.layers.map(()=>0);let last=performance.now();
 function frame(t){
@@ -499,17 +653,21 @@ function frame(t){
     const fps=+$('cfps').value,i=Math.floor(t/1000*fps)%S.ch.cells.length;
     if(S.tab===2){const a=$('canim').getContext('2d');a.clearRect(0,0,480,270);const k=Math.min(480/info.cw,270/info.ch);a.drawImage(S.ch.cells[i],(480-info.cw*k)/2,(270-info.ch*k)/2,info.cw*k,info.ch*k)}
   }
-  if(S.tab===3)drawStage(dt,t);
+  if(S.tab===3&&S.veh&&S.veh.cells.length){
+    const a=$('vprev').getContext('2d'),vi=S.veh.info,i=Math.floor(t/1000*vv('vfps'))%S.veh.cells.length,k=Math.min(480/vi.cw,270/vi.ch);
+    a.clearRect(0,0,480,270);a.drawImage(S.veh.cells[i],(480-vi.cw*k)/2,(270-vi.ch*k)/2,vi.cw*k,vi.ch*k);
+  }
+  if(S.tab===4)drawStage(dt,t);
   requestAnimationFrame(frame);
 }
 function drawStage(dt,t){
   const cv=$('stage'),g=cv.getContext('2d'),PW=cv.width,PH=cv.height,sc=PH/H;
   g.fillStyle='#10131a';g.fillRect(0,0,PW,PH);
-  const info=S.ch.info;
+  const src=($('pvsrc').value==='veh'&&S.veh&&S.veh.cells.length)?S.veh:S.ch,info=src.info,isV=src===S.veh;
   const sprite=()=>{
-    if(!info||!S.ch.cells.length)return;
-    const fps=+$('cfps').value,i=Math.floor(t/1000*fps)%S.ch.cells.length,k=(0.24*PH)/(info.ch-16);
-    g.drawImage(S.ch.cells[i],PW*.4-info.ax*k,PH*.93-info.base*k,info.cw*k,info.ch*k);
+    if(!info||!src.cells.length)return;
+    const fps=isV?vv('vfps'):+$('cfps').value,i=Math.floor(t/1000*fps)%src.cells.length,k=((info.tall||0.24)*PH)/(info.vh||(info.ch-16));
+    g.drawImage(src.cells[i],PW*.4-info.ax*k,PH*.93-info.base*k,info.cw*k,info.ch*k);
   };
   S.layers.forEach((l,i)=>{
     if(l.out){
@@ -529,6 +687,7 @@ $('zip').onclick=async()=>{
   let n=0;
   for(const l of S.layers){if(!l.out)continue;n++;const name='layers/0'+n+'_'+l.k+'.png';files.push({name,data:await png(l.out)});meta.layers.push({file:name,width:l.out.width,height:l.out.height,suggestedSpeed:l.speed,transparent:!l.opaque})}
   if(S.ch.sheet){const i=S.ch.info;files.push({name:'character/walk_sheet.png',data:await png(S.ch.sheet)});meta.sprite={file:'character/walk_sheet.png',columns:i.cols,rows:i.rows,frames:S.ch.cells.length,cellWidth:i.cw,cellHeight:i.ch,suggestedFps:+$('cfps').value}}
+  if(S.veh&&S.veh.sheet){const i=S.veh.info;files.push({name:'vehicle/vehicle_sheet.png',data:await png(S.veh.sheet)});meta.vehicle={file:'vehicle/vehicle_sheet.png',columns:i.cols,rows:i.rows,frames:S.veh.cells.length,cellWidth:i.cw,cellHeight:i.ch,suggestedFps:vv('vfps')}}
   if(!files.length){$('zst').textContent='Nothing to export yet.';return}
   files.push({name:'project.json',data:te.encode(JSON.stringify(meta,null,2))});
   const blob=new Blob(zipFiles(files),{type:'application/zip'}),a=document.createElement('a');
