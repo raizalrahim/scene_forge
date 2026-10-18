@@ -16,7 +16,8 @@ Source: side view, steady run on a treadmill, fixed camera, plain background, 24
 - A short moment where both feet are off the ground.
 
 ## Playback speed
-- Frames per second for an N frame cycle = N / 0.45. For 8 frames about 18 fps, for 11 frames about 24 fps.
+- Frames per second for an N frame cycle = N / 0.45. For 8 frames about 18 fps, for 11 frames about 24 fps, for 16 frames about 36 fps.
+  The Scene Forge preview and the parallax app cap at about 24 to 30 fps, so a 16 frame run plays slower than the clip. That is fine for a calmer look, or use the 8 frame set.
 
 ## Ground speed so the feet do not slide
 - Tracked from the planted shoe on the treadmill: about 0.8 x the character's height per second (median of 30 to 32 tracks).

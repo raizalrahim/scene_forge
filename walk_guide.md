@@ -17,7 +17,7 @@ Source: side view, in place, 30 fps, figure about 632 px tall.
 - Head top by phase (px, lower number = higher): 46, 42, 31, 31 | 47, 40, 31, 34
 
 ## Playback speed
-- Frames per second for an N frame cycle = N / 1.27. For 8 frames about 6.3 fps, for 16 frames about 12.6 fps.
+- Frames per second for an N frame cycle = N / 1.27. For 8 frames about 6.3 fps, for 16 frames about 12.6 fps (this is the 16 frame set).
 
 ## Ground speed so the feet do not slide
 - Measured by tracking a planted shoe in the clip: about 0.44 x the character's height per second (15 tracks, tightly grouped).
