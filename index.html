@@ -100,7 +100,9 @@ canvas.stage{width:100%;max-width:720px;aspect-ratio:16/9;border:1px solid var(-
 <section id="s3" hidden>
   <div class="panel">
     <label>Vehicle description<textarea id="vdesc">a rugged two-door off-road SUV with a spare tyre on the back</textarea></label>
-    <div class="row"><button class="pri" id="vgen">Generate with Gemini</button><label class="btn">Upload a vehicle image<input id="vfile" type="file" accept="image/*" hidden></label></div>
+    <div class="row"><button class="pri" id="vgen">Generate with Gemini</button><label class="btn">Upload a vehicle image<input id="vfile" type="file" accept="image/*" hidden></label><button id="vflip" disabled>Flip left / right</button></div>
+    <label class="inl"><input id="vdirchk" type="checkbox" checked> Check the direction automatically and flip the vehicle so it faces right</label>
+    <label class="inl"><input id="venc" type="checkbox" checked> Also remove enclosed white gaps (between the wheels and the body). Turn off if the windows are white.</label>
     <div class="ctl"><span>BG tolerance</span><input id="vtol" type="range" min="5" max="120" value="40"><span id="vtolv">40</span></div>
     <p id="vst" class="mute">Generate or upload one side-on image of a vehicle facing right on a plain white background. The app spins the wheels and bounces the body. Nothing else is generated, so every frame matches.</p>
   </div>
@@ -568,14 +570,15 @@ $('cenc').onchange=()=>{if(S.ch.raw)processChar()};
 $('cdl').onclick=()=>dlCanvas(S.ch.sheet,'walk_sheet.png');
 
 // ---- vehicle rig
-const V={raw:null,base:null,wheels:[{cx:0,cy:0},{cx:0,cy:0}],mode:null,manual:false};
+const V={flip:false,note:'',raw:null,base:null,wheels:[{cx:0,cy:0},{cx:0,cy:0}],mode:null,manual:false};
 S.veh=null;S.vbusy=false;
 const vst=(m,err)=>{$('vst').textContent=m;$('vst').className=err?'err':'mute'};
 const vv=id=>+$(id).value;
 ['vrad','vrim','vfps','vrps','vspk','vbounce','vbc','vpitch','vbump'].forEach(id=>{
   const el=$(id),lab=$(id+'v');el.oninput=()=>{lab.textContent=el.value;redrawVeh();buildVehicle()};
 });
-$('vtol').oninput=e=>{$('vtolv').textContent=e.target.value};$('vtol').onchange=()=>processVehicle();
+$('vtol').oninput=e=>{$('vtolv').textContent=e.target.value};$('vtol').onchange=()=>processVehicle();$('venc').onchange=()=>processVehicle();
+$('vflip').onclick=()=>{V.flip=!V.flip;V.manual=false;V.note=V.flip?'Flipped to face right. ':'Flipped back. ';processVehicle()};
 $('vN').onchange=()=>buildVehicle();$('vdir').onchange=()=>buildVehicle();
 function vmap(){const cv=$('vcv'),b=V.base,s=Math.min(cv.width/b.width,cv.height/b.height)*0.96;return{s,ox:(cv.width-b.width*s)/2,oy:(cv.height-b.height*s)/2}}
 function redrawVeh(){
@@ -594,12 +597,14 @@ function autoWheels(){
 }
 function processVehicle(){
   if(!V.raw)return;
-  const cv=toCanvas(V.raw);removeBg(cv,vv('vtol'),0);
+  let cv=toCanvas(V.raw);
+  if(V.flip){const c2=document.createElement('canvas');c2.width=cv.width;c2.height=cv.height;const g2=c2.getContext('2d');g2.translate(cv.width,0);g2.scale(-1,1);g2.drawImage(cv,0,0);cv=c2}
+  removeBg(cv,vv('vtol'),$('venc').checked?Math.max(40,Math.round(cv.width*cv.height*6e-5)):0);
   const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data,[x0,y0,x1,y1]=alphaBBox(d,cv.width,cv.height);
   if(x1<=x0||y1<=y0){vst('No vehicle found. Lower the tolerance or try another image.',1);return}
   const w=x1-x0+1,h=y1-y0+1,sc=Math.min(1,720/w),o=document.createElement('canvas');o.width=Math.round(w*sc);o.height=Math.round(h*sc);
-  const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,x0,y0,w,h,0,0,o.width,o.height);V.base=o;
-  let msg='Vehicle ready, '+o.width+' x '+o.height+' px. ';
+  const g=o.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(cv,x0,y0,w,h,0,0,o.width,o.height);V.base=o;$('vflip').disabled=false;
+  let msg=(V.note||'')+'Vehicle ready, '+o.width+' x '+o.height+' px. ';
   if(!V.manual){msg+=autoWheels()?'Wheels found automatically. Check the circles and adjust if needed.':'Could not find the wheels. Press "Click rear wheel" and "Click front wheel" to place them.'}
   vst(msg);redrawVeh();buildVehicle();
 }
@@ -633,15 +638,26 @@ function buildVehicle(){
   if(!S.ch.cells||!S.ch.cells.length)$('pvsrc').value='veh';
   $('vinfo').textContent=N+' frames in '+cols+' columns x '+rows+' rows, each '+CW+' x '+CH+' px. Loop length '+(N/fps).toFixed(2)+' s. The wheels turn '+plan.total.toFixed(0)+' degrees per loop'+(plan.patt?' ('+Math.round(plan.total/plan.patt)+' spoke repeats of '+plan.patt.toFixed(0)+' degrees, so it loops cleanly)':'')+', '+Math.abs(plan.step).toFixed(1)+' degrees per frame.';
 }
+async function autoFace(){
+  V.flip=false;V.note='';
+  if(!$('vdirchk').checked)return;
+  try{
+    const r=await fetch('/api/generate',{method:'POST',headers:{'content-type':'application/json','x-app-password':$('pw').value},body:JSON.stringify({mode:'direction',ref:refFrom(V.raw,640)})});
+    const j=await r.json();
+    if(r.ok&&j.answer==='left'){V.flip=true;V.note='It was facing left, so I flipped it to face right. '}
+    else if(r.ok&&j.answer==='right')V.note='';
+    else V.note='Could not check the direction automatically. If the front points left, press Flip. ';
+  }catch(e){V.note='Could not check the direction automatically. If the front points left, press Flip. '}
+}
 $('vgen').onclick=async()=>{
   const c=cfg();S.vbusy=true;lock();vst('Generating. This can take 10 to 40 seconds.');
   try{
-    const p=`A single ${$('vdesc').value.trim()}, drawn in a perfectly flat side-on view facing right, the whole vehicle visible with both wheels fully visible, round and not hidden. Art style: ${c.style}. ${BG} No driver, no shadows, no ground, no motion blur, no text.`;
-    const j=await api(p,null,'16:9');V.raw=await loadImg(j.image,j.mime);V.manual=false;processVehicle();
+    const p=`A single ${$('vdesc').value.trim()}, drawn in a perfectly flat, side-on profile view. IMPORTANT: the vehicle FACES RIGHT. Its front (bonnet or hood, headlights, front bumper) is on the RIGHT side of the image and its rear (boot, tail lights) is on the LEFT side. If your first idea faces left, mirror it so it faces right. The whole vehicle is visible, with both wheels fully visible, round and not hidden. Art style: ${c.style}. ${BG} No driver, no shadows, no ground, no motion blur, no text.`;
+    const j=await api(p,null,'16:9');V.raw=await loadImg(j.image,j.mime);V.manual=false;vst('Checking which way it faces...');await autoFace();processVehicle();
   }catch(e){vst(e.message,1)}
   finally{S.vbusy=false;lock()}
 };
-$('vfile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const img=new Image();img.onload=()=>{V.raw=img;V.manual=false;processVehicle()};img.src=URL.createObjectURL(f)};
+$('vfile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const img=new Image();img.onload=async()=>{V.raw=img;V.manual=false;await autoFace();processVehicle()};img.src=URL.createObjectURL(f)};
 $('vdl').onclick=()=>{if(S.veh)dlCanvas(S.veh.sheet,'vehicle_sheet.png')};
 
 // ---- preview loop (character animation + parallax stage)

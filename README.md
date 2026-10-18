@@ -47,3 +47,8 @@ Send it to Claude exactly as shown.
 - AI sprite sheets are often uneven. Check the frame count line under the sheet and regenerate if wrong.
 - On a Vercel Hobby plan a slow generation can time out (limit set to 60 s in vercel.json).
 - The password is a simple shared secret. Fine for a private tool, not for customers.
+
+## Vehicle direction check (optional)
+After a vehicle is generated or uploaded, Scene Forge asks a text model which way it faces and flips it if it points left.
+The model defaults to `gemini-2.5-flash`. If that name has changed, set the environment variable `GEMINI_TEXT_MODEL`.
+If the check fails it does nothing harmful: the Flip button always works by hand.
